@@ -1,0 +1,29 @@
+{
+  "migIndex": 1,
+  "data": [
+    {
+      "path": "src/assets/audio/cello_loud.wav",
+      "sha1": "72d553ce2ce8dfea6ed98859fb11809d89df6602"
+    },
+    {
+      "path": "src/assets/audio/cello.wav",
+      "sha1": "35658fa164c1d8ec6937ba46926af88ef5af4fea"
+    },
+    {
+      "path": "src/assets/audio/viola_loud.wav",
+      "sha1": "8f19236d9d727cad0ffc5a77ea0531ceeba0d2ac"
+    },
+    {
+      "path": "src/assets/audio/viola.wav",
+      "sha1": "953d56083bbc9436bab935324ee06b19669ce705"
+    },
+    {
+      "path": "src/assets/audio/violin_loud.wav",
+      "sha1": "c832b031fb1c4dd299564393ed3418a7d55c39f4"
+    },
+    {
+      "path": "src/assets/audio/violin.wav",
+      "sha1": "0a3424d7d82122915e58bad818e8c61274d53f65"
+    }
+  ]
+}
