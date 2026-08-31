@@ -24,6 +24,7 @@
     "react-native-audio-api": "0.4.18",
     "react-native-svg": "^15.6.0",
     "react-native-sound": "0.11.2",
+    "@sayem314/react-native-keep-awake": "^1.4.0",
     "@react-native-documents/picker": "10.1.7",
     "buffer": "^6.0.3"
   },

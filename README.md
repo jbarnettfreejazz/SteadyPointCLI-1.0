@@ -235,6 +235,34 @@ keyboard) to a dedicated full-screen modal, with the input pinned near
 the top of its own screen — well out of the keyboard's reach regardless
 of device/keyboard size.
 
+## Screen sleep during a session
+iOS locks the screen after its normal auto-lock timeout (5 minutes on
+most default settings) regardless of an active BLE connection — and
+when the screen locks, the app is suspended and **all JS execution
+stops**, including the BLE packet/metrics processing loop. The BLE
+connection itself stays alive at the native level, which is exactly
+why this looked like the session "paused" while still connected: data
+kept arriving over Bluetooth with nothing left running to process it.
+
+Fixed by keeping the screen awake for the duration of a session, via
+`useKeepAwake()` (`@sayem314/react-native-keep-awake`) in
+`RecordingScreen.js`. Pinned to the **1.x line** deliberately — the
+current 2.x requires React Native 0.82+ and New-Architecture-only,
+neither of which matches this project (RN 0.75.4, Old Architecture,
+matching several other libraries already pinned in this project for
+the same reason). Verified 1.4.0's native iOS module correctly guards
+all New-Architecture-specific code behind `#if RCT_NEW_ARCH_ENABLED`,
+with a plain old-style bridge module as the always-compiled path, and
+confirmed a standard podspec for normal autolinking (no manual Xcode
+project surgery needed).
+
+Since `RecordingScreen` deliberately stays mounted underneath the
+Summary screen (see the earlier sonification-stop fix), the screen
+stays awake through Summary too, not just the live session — that's
+harmless and arguably desirable, since you likely don't want the
+screen locking while reviewing results either. It releases once
+"Return to home" unmounts the whole Setup → Recording → Summary stack.
+
 ## SteadyPoint Score — session scoring algorithm
 The end-of-session score (`src/services/sessionLogic.js`'s `endSession()`)
 was changed from a reduction-based formula to a band-time-based one, per

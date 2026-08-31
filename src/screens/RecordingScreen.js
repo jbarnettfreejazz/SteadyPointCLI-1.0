@@ -11,6 +11,7 @@ import { setAudioHook } from '../state/liveSession';
 import * as audioService from '../services/audio';
 import { playGuideTrack, stopGuideTrack } from '../services/guideTrackPlayer';
 import Sparkline from '../components/Sparkline';
+import { useKeepAwake } from '@sayem314/react-native-keep-awake';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SPARK_CARD_WIDTH = SCREEN_WIDTH * 0.9;
@@ -21,6 +22,14 @@ export default function RecordingScreen() {
   const navigation = useNavigation();
   const { state, actions } = useStore();
   const live = useLiveSession();
+
+  // Without this, iOS locks the screen after its normal auto-lock timeout
+  // (commonly 5 min), which suspends the app and stops all JS execution —
+  // including the BLE packet/metrics processing loop — even though the
+  // BLE connection itself stays alive at the native level. That's what
+  // made a long session appear to "pause": data kept flowing over
+  // Bluetooth, but nothing was left running to process or record it.
+  useKeepAwake();
 
   const audioEnabled = state.config.feedbackType === 'audio' || state.config.feedbackType === 'both';
   const hasGuideTrack = state.guideMediaSource === 'phone' && !!state.guideMediaPath;
