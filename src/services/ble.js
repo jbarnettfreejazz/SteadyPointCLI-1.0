@@ -3,8 +3,10 @@ import { Buffer } from 'buffer';
 import { Platform, PermissionsAndroid } from 'react-native';
 import { pushPacket } from '../state/liveSession';
 
-// Same Nordic UART Service UUIDs as the original HTML — the M5StickC
-// Plus firmware doesn't need to change at all.
+// Same Nordic UART Service UUIDs as the original HTML — the on-device
+// firmware doesn't need to change its BLE protocol at all when the
+// hardware itself changes, as long as it keeps using these same UUIDs
+// and the same comma-separated x,y,z packet format.
 export const BLE_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 export const BLE_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 export const BLE_CMD = '6e400004-b5a3-f393-e0a9-e50e24dcca9e';
@@ -80,7 +82,7 @@ export async function connectBLE(callbacks = {}) {
           onDisconnected?.();
         });
 
-        onConnected?.();
+        onConnected?.(device.name);
       } catch (e) {
         onError?.('Connection error: ' + e.message);
       }

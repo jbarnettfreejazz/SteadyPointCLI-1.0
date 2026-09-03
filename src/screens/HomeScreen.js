@@ -155,7 +155,11 @@ export default function HomeScreen() {
             <View style={styles.rowGap}>
               <View style={[styles.dot, { backgroundColor: state.isConnected ? c.success : c.tx3 }]} />
               <Text style={{ color: c.tx1, fontWeight: '600' }}>
-                {state.isConnected ? 'M5StickC Plus connected' : state.bleConnecting ? 'Connecting…' : 'Not connected'}
+                {state.isConnected
+                  ? `${state.connectedDeviceName || 'Device'} connected`
+                  : state.bleConnecting
+                  ? 'Connecting…'
+                  : 'Not connected'}
               </Text>
             </View>
             <Pressable

@@ -9,7 +9,7 @@ export function useBLE() {
   const connect = useCallback(() => {
     bleService.connectBLE({
       onConnecting: () => actions.bleConnecting(),
-      onConnected: () => actions.bleConnected(),
+      onConnected: (deviceName) => actions.bleConnected(deviceName),
       onDisconnected: () => {
         actions.bleDisconnected();
         actions.bleErrorSet('Device disconnected.');

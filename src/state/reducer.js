@@ -46,13 +46,13 @@ export function appReducer(state, action) {
       return { ...state, bleConnecting: true, bleError: '' };
 
     case T.BLE_CONNECTED:
-      return { ...state, isConnected: true, bleConnecting: false, bleError: '' };
+      return { ...state, isConnected: true, bleConnecting: false, bleError: '', connectedDeviceName: action.deviceName || null };
 
     case T.BLE_DISCONNECTED:
-      return { ...state, isConnected: false, bleConnecting: false };
+      return { ...state, isConnected: false, bleConnecting: false, connectedDeviceName: null };
 
     case T.BLE_ERROR:
-      return { ...state, bleError: action.message, bleConnecting: false, isConnected: false };
+      return { ...state, bleError: action.message, bleConnecting: false, isConnected: false, connectedDeviceName: null };
 
     case T.SET_GUIDE_MEDIA:
       return {

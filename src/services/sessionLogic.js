@@ -206,6 +206,10 @@ export function startSession({ state, actions, navigation, overrides }) {
   actions.updateConfig({ customName: '', activityNote: '' });
   actions.setSetupMode('start');
 
+  // Fixed for the whole session, even if the setting changes before the
+  // *next* one — see liveSession.js's setFullScaleG() for why.
+  live.setFullScaleG(effective.settings?.fullScaleG);
+
   live.beginSessionBuffers();
   sendCommand('START');
 
@@ -236,7 +240,11 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
   stopGuideTrack();
 
   // Intensity shift (start vs end of session) — unrelated to the
-  // SteadyPoint Score itself, kept as-is.
+  // SteadyPoint Score itself, kept as-is. Uses the same fullScaleG that
+  // was actually in effect for this session (set at startSession time),
+  // not the default, so these numbers are consistent with the live
+  // display and the levelTrace used for the score below.
+  const sessionFullScaleG = live.getFullScaleG();
   let startLevel = 0,
     endLevel = 0,
     reductionPct = 0;
@@ -246,8 +254,8 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
     const ed = sessionBuffer.slice(-tenPct);
     const srms = rmsOf(sd.map((d) => d.x), sd.map((d) => d.y), sd.map((d) => d.z));
     const erms = rmsOf(ed.map((d) => d.x), ed.map((d) => d.y), ed.map((d) => d.z));
-    startLevel = rmsToLevel(srms);
-    endLevel = rmsToLevel(erms);
+    startLevel = rmsToLevel(srms, sessionFullScaleG);
+    endLevel = rmsToLevel(erms, sessionFullScaleG);
     reductionPct = startLevel > 0 ? Math.max(0, Math.round(((startLevel - endLevel) / startLevel) * 100)) : 0;
   }
 
@@ -308,6 +316,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
     pctModerate,
     pctHigh,
     reduction: reductionPct,
+    fullScaleG: sessionFullScaleG,
     startLevel,
     endLevel,
     duration: Math.max(1, Math.round(secs / 60)),
@@ -345,6 +354,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
     pctModerate: results.pctModerate,
     pctHigh: results.pctHigh,
     reduction: results.reduction,
+    fullScaleG: results.fullScaleG,
     duration: results.duration,
     freq: results.peakFreq,
     startLevel: results.startLevel,

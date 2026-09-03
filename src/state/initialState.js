@@ -53,10 +53,12 @@ export function buildInitialState(appMode = 'real') {
       sonification: true,
       defaultDuration: 10,
       defaultType: 'guided',
+      fullScaleG: 0.35, // "Full-scale range motion (in g) that reads as intensity 100" — see dsp.js's rmsToLevel()
     },
 
     // BLE connection status (not packet data — see liveSession.js)
     isConnected: false,
+    connectedDeviceName: null,
     bleConnecting: false,
     bleError: '',
 

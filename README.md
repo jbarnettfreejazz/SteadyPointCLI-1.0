@@ -12,8 +12,13 @@ we're building this as a native app instead).
 - Global state: Context + `useReducer` (`src/state/`) replacing the
   original's ~30 mutable globals + manual `render()` calls
 - BLE service (`src/services/ble.js`) using `react-native-ble-plx` —
-  same Nordic UART UUIDs as the original, so **no firmware changes
-  needed** on the M5StickC Plus
+  same Nordic UART UUIDs as the original, so **no app-side changes
+  needed** as long as the on-device firmware keeps the same protocol,
+  regardless of which physical M5Stick model it's running on. The
+  "connected" text on Home is not hardcoded to a device model — it
+  shows whatever name the connected device actually advertises over
+  BLE (currently "TremorMonitor", per the firmware's own advertised
+  name — change that in the firmware, not here, for a different label)
 - DSP utilities (`src/utils/dsp.js`) — `mean`, `std`, `rmsOf`, FFT,
   `dominantFreq` — ported line-for-line, no logic changes
 - Live session store (`src/state/liveSession.js`) — mirrors
@@ -311,6 +316,73 @@ The "Reduction" stat (start vs end intensity comparison) and its
 underlying `startLevel`/`endLevel` are unrelated to the SteadyPoint
 Score and were kept as-is — worth restating since they were briefly,
 accidentally dropped mid-edit and then restored before shipping.
+
+## Configurable sensitivity calibration
+`FULL_SCALE_G` (the amount of motion that reads as intensity 100) is
+now user-adjustable via Settings, rather than a fixed constant —
+matching a change the team's parallel progressive web app developer
+already made on his end, for cross-platform consistency. `NOISE_FLOOR_G`
+stays fixed; only full-scale was requested as configurable.
+
+The Settings UI itself was matched directly to the PWA's own Settings
+> Sensitivity section (from a screenshot) for visual/UX consistency
+across platforms — four preset pills rather than free-form numeric
+entry, plus the same in-app transparency note about cross-sensitivity
+comparability. One deliberate difference: presets are 0.35g / 1.0g /
+2.0g / 3.0g here, not the PWA's 0.3g / 1.0g / 2.0g / 3.0g — keeping our
+own value (tuned from actual on-device calibration earlier this
+project) rather than adopting the PWA's close-but-different 0.3g, at
+the user's explicit choice.
+
+- **Setting**: `state.settings.fullScaleG`, adjustable in
+  `SettingsScreen.js` (now a real screen, not a placeholder), persisted
+  automatically via the existing generic `state.settings` persistence
+  — no new storage keys needed. Defaults to `DEFAULT_FULL_SCALE_G`
+  (0.35, matching the previous hardcoded value), exported from
+  `src/utils/dsp.js` as the single source of truth for that default
+- **Used in calculation**: `rmsToLevel(rms, fullScaleG)` in
+  `src/utils/dsp.js` now takes this as a parameter instead of a fixed
+  module constant. Verified directly that different values actually
+  shift the resulting level as expected (wider full-scale → lower
+  reading for the same physical motion, narrower → higher) before
+  wiring it in
+- **Fixed per-session, not read live**: `src/state/liveSession.js`
+  holds the value in module state (`setFullScaleG()`/`getFullScaleG()`,
+  the same pattern as the existing `setAudioHook()`), set once when
+  `startSession()` begins from whatever the setting was at that moment
+  — so a mid-session change to the setting (not currently reachable in
+  the UI anyway, since Settings isn't accessible during a session)
+  couldn't affect a session already in progress
+- **Persisted with session data**: each session record now stores the
+  `fullScaleG` it was actually computed with (`sessionLogic.js`),
+  shown as a small footnote on Session Detail ("Calibrated to 0.35g
+  full-scale"). This matters for Analytics: two sessions scored under
+  *different* full-scale settings aren't directly comparable the same
+  way two sessions under the *same* setting are — that nuance isn't
+  yet surfaced anywhere in Analytics itself (no UI change there in
+  this pass), but the data needed to account for it is now captured
+  on every session going forward
+
+## Device migration — M5StickC Plus to M5StickS3
+M5Stack discontinued the M5StickC Plus; the project is moving to the
+M5StickS3. On the app side, this needed only cosmetic changes (see
+above — no hardcoded model name left anywhere in the codebase). The
+one thing that does **not** automatically carry over: the two devices
+use genuinely different IMU chips (Plus: MPU6886, S3: BMI270 — different
+manufacturers, different hardware). The tremor scoring calibration
+constants (`NOISE_FLOOR_G`, `FULL_SCALE_G` in `src/utils/dsp.js`) were
+tuned to real-world output from the old sensor specifically, not an
+abstract "g-force" concept — a different physical chip can have a
+different noise floor and sensitivity even when reporting in the same
+units. These should be re-validated against real S3 hardware before
+trusting the absolute scores/levels it produces, the same kind of
+on-device tuning that produced the current constants in the first
+place. This project has no visibility into the M5Stick's own firmware
+(it's treated purely as a BLE peripheral sending a known packet
+format) — if the S3's firmware changes the wire protocol at all
+(different UUIDs, different packet format), `src/services/ble.js`'s
+parsing will need updating too; if the protocol stays identical, no
+BLE-layer changes are needed.
 
 ## Tremor intensity scoring — absolute calibration
 The 0-100 tremor intensity level (`rmsToLevel()` in `src/utils/dsp.js`)

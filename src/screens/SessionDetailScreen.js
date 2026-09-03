@@ -91,6 +91,12 @@ export default function SessionDetailScreen() {
           <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 20 }}>{sessionInsight(s.reduction)}</Text>
         </View>
 
+        {s.fullScaleG != null && (
+          <Text style={{ fontSize: 11, color: c.tx3, textAlign: 'center', marginBottom: 16 }}>
+            Calibrated to {s.fullScaleG}g full-scale
+          </Text>
+        )}
+
         <Pressable
           onPress={() => startSimilarSession({ state, actions, navigation, session: s })}
           style={[styles.primaryButton, { backgroundColor: c.tx1 }]}>

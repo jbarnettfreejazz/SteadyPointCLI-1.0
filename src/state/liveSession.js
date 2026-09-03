@@ -1,4 +1,4 @@
-import { rmsOf, std, dominantFreq, rmsToLevel } from '../utils/dsp';
+import { rmsOf, std, dominantFreq, rmsToLevel, DEFAULT_FULL_SCALE_G } from '../utils/dsp';
 
 // ══════════════════════════════════════════════════════
 // LIVE SESSION STORE
@@ -48,6 +48,22 @@ let state = freshState();
 const listeners = new Set();
 const timers = { elapsedInterval: null, metricsInterval: null };
 let audioHook = null;
+
+// The user-adjustable "full-scale range motion" setting (see Settings
+// screen / dsp.js's rmsToLevel()) — set once at the start of each session
+// (see sessionLogic.js's startSession()) so the value used stays fixed for
+// that session's whole duration, even if the user changes the setting
+// before their *next* session. Read back via getFullScaleG() when a
+// session ends, so the exact value actually used gets persisted with it.
+let fullScaleG = DEFAULT_FULL_SCALE_G;
+
+export function setFullScaleG(value) {
+  fullScaleG = typeof value === 'number' && value > 0 ? value : DEFAULT_FULL_SCALE_G;
+}
+
+export function getFullScaleG() {
+  return fullScaleG;
+}
 
 // Registered by the Recording screen when audio feedback is enabled —
 // mirrors the original's `if(audioEnabled()&&screen==='active') updateAudio(...)`
@@ -158,7 +174,7 @@ function updateLiveMetrics() {
   if (state.recentX.length < METRICS_WARMUP_SAMPLES) return;
 
   const rms = rmsOf(state.recentX, state.recentY, state.recentZ);
-  const tremorLevel = rmsToLevel(rms);
+  const tremorLevel = rmsToLevel(rms, fullScaleG);
   state.tremorLevel = tremorLevel;
   state.sparkBuf = [...state.sparkBuf.slice(-(SPARK_LEN - 1)), tremorLevel];
   state.tremorHistory = state.sparkBuf;

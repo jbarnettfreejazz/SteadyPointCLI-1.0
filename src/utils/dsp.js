@@ -83,15 +83,22 @@ export function fmt(s) {
 // Maps a gravity-free AC-RMS value (see rmsOf() above) to an absolute
 // 0-100 tremor intensity level, calibrated against fixed device thresholds
 // rather than anything session-relative — so the same physical tremor
-// severity always produces the same level, comparable across sessions.
-// NOISE_FLOOR_G: below this, the sensor reads as still (level 0).
-// FULL_SCALE_G: this RMS value (in units of g) maps to level 100.
+// severity always produces the same level, comparable across sessions
+// that share the same fullScaleG setting (see below — this is now
+// user-adjustable, so comparisons across sessions with *different*
+// fullScaleG values should account for that; each session stores the
+// value it was actually computed with).
+// NOISE_FLOOR_G: below this, the sensor reads as still (level 0) — fixed,
+// not user-adjustable (only full-scale was requested as configurable).
+// fullScaleG: this RMS value (in units of g) maps to level 100 — user-
+// adjustable via Settings ("Full-scale range motion that reads as
+// intensity 100"), defaulting to DEFAULT_FULL_SCALE_G.
 const NOISE_FLOOR_G = 0.006;
-const FULL_SCALE_G = 0.35;
+export const DEFAULT_FULL_SCALE_G = 0.35;
 
-export function rmsToLevel(rms) {
+export function rmsToLevel(rms, fullScaleG = DEFAULT_FULL_SCALE_G) {
   if (rms <= NOISE_FLOOR_G) return 0;
-  const pct = ((rms - NOISE_FLOOR_G) / (FULL_SCALE_G - NOISE_FLOOR_G)) * 100;
+  const pct = ((rms - NOISE_FLOOR_G) / (fullScaleG - NOISE_FLOOR_G)) * 100;
   return Math.round(Math.max(0, Math.min(100, pct)));
 }
 

@@ -25,7 +25,7 @@ export function StoreProvider({ children, initialMode = 'real' }) {
       updateSettings: (patch) => dispatch({ type: T.UPDATE_SETTINGS, patch }),
 
       bleConnecting: () => dispatch({ type: T.BLE_CONNECTING }),
-      bleConnected: () => dispatch({ type: T.BLE_CONNECTED }),
+      bleConnected: (deviceName) => dispatch({ type: T.BLE_CONNECTED, deviceName }),
       bleDisconnected: () => dispatch({ type: T.BLE_DISCONNECTED }),
       bleErrorSet: (message) => dispatch({ type: T.BLE_ERROR, message }),
 
