@@ -12,10 +12,17 @@ import { DEFAULT_FULL_SCALE_G } from '../utils/dsp';
 // at the user's explicit request, rather than adopting that value verbatim.
 const PRESETS_G = [DEFAULT_FULL_SCALE_G, 1.0, 2.0, 3.0];
 
+const VOICE_OPTIONS = [
+  { key: 'cello', label: 'Cello' },
+  { key: 'viola', label: 'Viola' },
+  { key: 'violin', label: 'Violin' },
+];
+
 export default function SettingsScreen() {
   const c = useTheme();
   const { state, actions } = useStore();
   const currentValue = state.settings.fullScaleG ?? DEFAULT_FULL_SCALE_G;
+  const currentVoice = state.settings.sonificationVoice ?? 'cello';
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
@@ -55,6 +62,35 @@ export default function SettingsScreen() {
             Scores recorded at different sensitivities are not directly comparable. Each session
             stores the value it was recorded at.
           </Text>
+        </View>
+
+        <Text style={[styles.sectionLabel, { color: c.tx3, marginTop: 20 }]}>SONIFICATION</Text>
+        <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Instrument</Text>
+          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
+            Your movement is represented as a single voice, blending all three axes together.
+            Choose which instrument plays it.
+          </Text>
+
+          <View style={styles.pillRow}>
+            {VOICE_OPTIONS.map((v) => {
+              const selected = currentVoice === v.key;
+              return (
+                <Pressable
+                  key={v.key}
+                  onPress={() => actions.updateSettings({ sonificationVoice: v.key })}
+                  style={[
+                    styles.pill,
+                    {
+                      borderColor: selected ? c.info : c.bd3,
+                      backgroundColor: selected ? c.bgInfo : c.bg1,
+                    },
+                  ]}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: selected ? c.info : c.tx1 }}>{v.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>

@@ -54,6 +54,7 @@ export function buildInitialState(appMode = 'real') {
       defaultDuration: 10,
       defaultType: 'guided',
       fullScaleG: 0.35, // "Full-scale range motion (in g) that reads as intensity 100" — see dsp.js's rmsToLevel()
+      sonificationVoice: 'cello', // which single instrument carries the combined-axis sonification signal
     },
 
     // BLE connection status (not packet data — see liveSession.js)
