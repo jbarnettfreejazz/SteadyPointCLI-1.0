@@ -3,7 +3,7 @@ import { rmsOf, rmsToLevel } from '../utils/dsp';
 import * as live from '../state/liveSession';
 import { sendCommand } from './ble';
 import { persistSave } from './persistence';
-import { silenceAudio } from './audio';
+import { silenceAudio, setActiveVoice } from './audio';
 import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
 
@@ -209,6 +209,7 @@ export function startSession({ state, actions, navigation, overrides }) {
   // Fixed for the whole session, even if the setting changes before the
   // *next* one — see liveSession.js's setFullScaleG() for why.
   live.setFullScaleG(effective.settings?.fullScaleG);
+  setActiveVoice(effective.settings?.sonificationVoice);
 
   live.beginSessionBuffers();
   sendCommand('START');

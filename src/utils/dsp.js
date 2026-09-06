@@ -80,6 +80,60 @@ export function fmt(s) {
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 }
 
+// Finds the FFT bin with the highest magnitude, excluding DC (0 Hz) — no
+// source-range restriction during the search itself, matching the
+// reference Python implementation's dominant_frequency() (the tremor/
+// movement frequency range is only applied later, when mapping the
+// result into an audible tone via mapRange()). Separate from the
+// existing dominantFreq() above, which has its own fixed 1-15Hz search
+// restriction baked in for its own established purpose (the "Dominant
+// Freq" stat) — not touched by this.
+function peakFreqUnrestricted(signal, sr) {
+  let n = 1;
+  while (n < signal.length) n <<= 1;
+  if (n < 2) return null;
+  const re = signal.slice(0, n).concat(new Array(Math.max(0, n - signal.length)).fill(0));
+  const im = new Array(n).fill(0);
+  fft(re, im);
+  let best = -1,
+    bestP = 0;
+  for (let i = 1; i < n / 2; i++) {
+    const p = re[i] * re[i] + im[i] * im[i];
+    if (p > bestP) {
+      bestP = p;
+      best = i;
+    }
+  }
+  return best >= 0 ? (best * sr) / n : null;
+}
+
+// Combined dominant frequency across all three axes, for sonification
+// pitch — mirrors the reference's approach: FFT each axis separately
+// (mean-removed, i.e. gravity/DC offset stripped), find each axis's own
+// dominant frequency, then average whichever axes produced a usable
+// result. Returns null if none did (e.g. not enough samples yet).
+export function combinedDominantFreq(xs, ys, zs, sr, minSamples = 16) {
+  const freqs = [];
+  for (const axis of [xs, ys, zs]) {
+    if (axis.length < minSamples) continue;
+    const m = mean(axis);
+    const centered = axis.map((v) => v - m);
+    const f = peakFreqUnrestricted(centered, sr);
+    if (f != null && f > 0) freqs.push(f);
+  }
+  if (freqs.length === 0) return null;
+  return freqs.reduce((a, b) => a + b, 0) / freqs.length;
+}
+
+// Linearly maps value from [srcMin,srcMax] into [dstMin,dstMax], clamping
+// out-of-range input first. Mirrors the reference's map_to_audible().
+export function mapRange(value, srcMin, srcMax, dstMin, dstMax) {
+  if (value == null) return null;
+  const clamped = Math.min(Math.max(value, srcMin), srcMax);
+  const ratio = (clamped - srcMin) / (srcMax - srcMin);
+  return dstMin + ratio * (dstMax - dstMin);
+}
+
 // Maps a gravity-free AC-RMS value (see rmsOf() above) to an absolute
 // 0-100 tremor intensity level, calibrated against fixed device thresholds
 // rather than anything session-relative — so the same physical tremor

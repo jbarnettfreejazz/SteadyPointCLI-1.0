@@ -17,12 +17,25 @@ import { rmsOf, std, dominantFreq, rmsToLevel, DEFAULT_FULL_SCALE_G } from '../u
 
 const SPARK_LEN = 50;
 const ROLL_WIN = 100; // ~2s at 50Hz
+// Dedicated, longer window just for sonification's combined-frequency
+// detection (see combinedDominantFreq() in dsp.js) — kept separate from
+// ROLL_WIN above, which drives intensity/tremorLevel/SteadyPoint Score
+// and shouldn't be touched by this. Confirmed via real device logs that
+// ~2s (barely one full cycle at a 0.5Hz test frequency) was too short
+// for a stable FFT read; this gives low frequencies more complete
+// cycles to work with.
+const FREQ_WIN = 250; // ~5s at 50Hz
 
 function freshState() {
   return {
     recentX: [],
     recentY: [],
     recentZ: [],
+    // Separate, longer-window buffers just for sonification's frequency
+    // detection — see FREQ_WIN above for why.
+    freqWinX: [],
+    freqWinY: [],
+    freqWinZ: [],
     dispX: Array(SPARK_LEN).fill(0),
     dispY: Array(SPARK_LEN).fill(0),
     dispZ: Array(SPARK_LEN).fill(0),
@@ -119,6 +132,15 @@ export function pushPacket(ax, ay, az) {
     state.recentZ.shift();
   }
 
+  state.freqWinX.push(ax);
+  state.freqWinY.push(ay);
+  state.freqWinZ.push(az);
+  if (state.freqWinX.length > FREQ_WIN) {
+    state.freqWinX.shift();
+    state.freqWinY.shift();
+    state.freqWinZ.shift();
+  }
+
   state.dispX = [...state.dispX.slice(-(SPARK_LEN - 1)), ax];
   state.dispY = [...state.dispY.slice(-(SPARK_LEN - 1)), ay];
   state.dispZ = [...state.dispZ.slice(-(SPARK_LEN - 1)), az];
@@ -147,7 +169,15 @@ export function pushPacket(ax, ay, az) {
   // calling audioHook from updateLiveMetrics below instead (~300ms).
   if (audioHook) {
     try {
-      audioHook(state.recentX, state.recentY, state.recentZ, state.tremorLevel);
+      // Same sr formula used by updateLiveMetrics() for the existing
+      // "Dominant Freq" stat — reused here so the new sonification
+      // pitch's FFT uses a consistent sample-rate estimate.
+      const sr = state.packetTimes.length > 1 ? state.packetTimes.length / 2 : 50;
+      audioHook(state.recentX, state.recentY, state.recentZ, state.tremorLevel, sr, {
+        x: state.freqWinX,
+        y: state.freqWinY,
+        z: state.freqWinZ,
+      });
     } catch (e) {
       console.warn('audioHook failed:', e.message);
     }

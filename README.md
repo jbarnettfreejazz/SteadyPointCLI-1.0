@@ -317,6 +317,151 @@ underlying `startLevel`/`endLevel` are unrelated to the SteadyPoint
 Score and were kept as-is — worth restating since they were briefly,
 accidentally dropped mid-edit and then restored before shipping.
 
+## Sonification frequency-detection investigation
+Real device testing (metronome-guided shake tests at known BPMs,
+compared via temporary diagnostic logging) surfaced multiple issues
+with the combined-frequency pitch source. Two early fixes turned out
+to be necessary-but-insufficient; the actual root cause was confirmed
+by a decisive motionless-device test, and finally isolated with
+synthetic-signal testing of the real production code.
+
+1. **Missing temporal smoothing** — the original port omitted an
+   exponential-smoothing step that was actually specified in the
+   reference implementation. Fixed: `FREQ_SMOOTHING_ALPHA = 0.2` in
+   `src/services/audio.js`.
+2. **A "window too short" hypothesis that turned out to be wrong** —
+   initially suspected the ~2s rolling window couldn't resolve low
+   frequencies, and added a dedicated 5s window (`FREQ_WIN`/
+   `freqWinX/Y/Z` in `liveSession.js`). Retested: made no meaningful
+   difference. Kept anyway since it's harmless, but it was not the fix.
+3. **Confirmed root cause, via a motionless-device test**: with the
+   M5Stick completely still (no hand involved), the detector still
+   reported erratic 10-20Hz+ readings — proving the FFT reports
+   whichever bin has the most noise energy as a "dominant frequency"
+   when no real signal is present. **Fixed** by gating detection behind
+   `MIN_INTENSITY_FOR_FREQ = 8` (roughly the low end of "Mild").
+4. **Isolated definitively via synthetic-signal testing** of the actual
+   production `combinedDominantFreq()` (not a reimplementation — the
+   real function, run standalone in Node against generated data):
+   - Clean sine waves from 0.5-8Hz are all detected correctly,
+     confirming the algorithm itself has no bug
+   - A weak 0.5Hz fundamental + a stronger 4Hz artifact is misdetected
+     as ~3.9Hz — closely matching the ~4-5Hz consistently seen on real
+     60 BPM device tests
+   - The same artifact against a *strong* 1.83Hz fundamental (220 BPM)
+     is correctly detected — matching why that real test converged
+     cleanly while 60 BPM never did, however long it ran
+   - **Conclusion**: not a code bug. Real, slow, deliberate hand motion
+     produces genuinely weak acceleration at its own fundamental
+     (acceleration scales with frequency² for a given displacement),
+     letting harmonics/artifacts from imperfect execution dominate.
+     Actual clinical tremor (~4-12Hz) should behave like the
+     successful 220 BPM case, not the artificial 60 BPM case.
+5. **Follow-up UX fix**: the `MIN_INTENSITY_FOR_FREQ` gate (item 3)
+   was confirmed via logs to cause pitch to freeze abruptly at its last
+   value once intensity dropped below threshold — making a natural
+   slow-down sound "stuck" rather than settling down, since gain fades
+   independently and gradually while pitch just stopped updating.
+   Fixed: below threshold, pitch now eases toward
+   `SOURCE_FREQ_MIN_HZ` over ~2-3 seconds (`FREQ_DECAY_ALPHA = 0.25`)
+   rather than freezing, resetting to null (silence-ready) once
+   settled — preserves the motionless-device fix while giving a
+   graceful fade instead of an abrupt stop.
+
+All fixes confirmed with a combined real-world test (motionless →
+moderate → vigorous → moderate → motionless): pitch and volume both
+rose clearly during the vigorous phase and both faded gracefully
+rather than freezing when winding down.
+
+The `[sonification]` diagnostic console.log used throughout this
+investigation is now off by default, gated behind
+`SONIFICATION_DEBUG_LOGGING` in `audio.js` — flip that one boolean to
+`true` to re-enable it if needed again, rather than re-adding logging
+from scratch.
+
+## Crash fix — confirmed via real crash log
+A crash reported during long (2+ minute) sonification-on sessions was
+initially addressed with a guess (throttling native automation call
+volume) that turned out not to fix it — confirmed by testing, still
+crashed at the same point even throttled. Got an actual iOS crash log
+this time (`.ips` file via Settings > Privacy & Security > Analytics &
+Improvements > Analytics Data) and found the real cause: `SIGSEGV`
+inside `react-native-audio-api`'s own native `AudioParam.
+cancelScheduledValues()` implementation (a deque-iterator decrement
+failing), called from `stopHard()` in `src/services/audio.js` at
+session end. Fixed by removing that call entirely —
+`setValueAtTime(0, t)` alone still silences the gain; the throttling
+from the earlier guess was left in place anyway since reducing native
+call volume is reasonable on its own merits, just wasn't the actual
+fix. Small accepted tradeoff: without an explicit cancel, a pending
+ramp scheduled slightly beyond the silence point could theoretically
+cause a brief audible blip before truly going silent — clearly
+preferable to a crash.
+
+## Sonification redesign — single combined voice
+Replaced three independent voices (Cello=X, Viola=Y, Violin=Z, each
+driven by its own axis) with a single voice — user-selected instrument
+(Settings > Sonification) — driven by all three axes combined. Found
+that three simultaneously-moving pitches felt busy even with
+pentatonic quantization; muting two of three voices made it "much
+more palatable," which directly motivated this redesign.
+
+Ported from a reference Python implementation (`sp_stdout.py`) per an
+explicit spec: pitch maps to the tremor's dominant frequency, volume
+maps to tremor intensity.
+
+- **Pitch**: `combinedDominantFreq()` in `src/utils/dsp.js` — FFT each
+  axis separately (mean/gravity-removed), find each axis's own
+  dominant frequency, average whichever axes produced a usable
+  result. That combined frequency (expected 0.5-20Hz movement range)
+  is linearly mapped (`mapRange()`) into the selected instrument's own
+  natural register (reusing the old per-axis ranges: cello 65-130Hz,
+  viola 196-330Hz, violin 392-784Hz)
+- **Volume**: directly proportional to `tremorLevel` (the same 0-100
+  value shown elsewhere in the app), not a movement-delta as before —
+  "silence when steady" still holds naturally
+- **Verified before wiring in**: tested `combinedDominantFreq()`
+  against a synthetic known-frequency signal (confirmed it correctly
+  recovers ~5Hz from three axes oscillating at 4.5/5.0/5.5Hz) and
+  simulated the full pitch+volume pipeline across realistic scenarios
+  for all three instrument choices, before trusting either
+
+**Deliberate choices made porting this, not explicitly specified
+either way:**
+- **Not quantizing pitch to the pentatonic scale** the old engine
+  used — that existed specifically to prevent dissonant clashes
+  between *simultaneous* voices, which can't happen with only one
+  voice playing. `quantizeToScale()` was removed; straightforward to
+  reintroduce if a more "musical" (vs. scientifically direct) feel is
+  wanted later
+- **FFT throttled internally to ~300ms**, separate from the per-packet
+  (~50Hz) cadence everything else in this engine uses — running an FFT
+  on 3 axes at full packet rate is meaningfully more CPU work than
+  anything this engine has done before. Volume stays fully responsive
+  every packet; only the expensive frequency recompute is throttled.
+  This is a new, reasoned safeguard, not something proven necessary by
+  an observed on-device issue this time — worth watching for any signs
+  of it still being too much load
+- **Skipped the reference's uniform-time-grid resampling step** before
+  each axis's FFT (added there for robustness against irregular BLE
+  timing) — reuses the same "packets arrive regularly enough" assumption
+  the pre-existing `dominantFreq()`/"Dominant Freq" stat already makes,
+  rather than adding real per-sample timestamp tracking as a larger,
+  separate change
+- **Per-axis mute removed entirely** (not just hidden) — muting one of
+  three voices has no coherent meaning when only one voice ever plays;
+  turning off sonification entirely is still available via the existing
+  visual-only feedback-type toggle
+- **Settings > Sonification** lets the user choose which instrument
+  carries this combined signal — set once at session start from the
+  current setting (mirrors how `fullScaleG` is already fixed per-session)
+
+The existing "Dominant Freq" stat and the SteadyPoint Score's stored
+`peakFreq` are **untouched** by this — those still use the pre-existing
+Y-axis-only `dominantFreq()`, a deliberate scope decision to avoid
+touching an unrelated, already-working feature while iterating on
+sonification specifically.
+
 ## Configurable sensitivity calibration
 `FULL_SCALE_G` (the amount of motion that reads as intensity 100) is
 now user-adjustable via Settings, rather than a fixed constant —

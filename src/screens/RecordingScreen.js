@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -34,19 +34,6 @@ export default function RecordingScreen() {
   const audioEnabled = state.config.feedbackType === 'audio' || state.config.feedbackType === 'both';
   const hasGuideTrack = state.guideMediaSource === 'phone' && !!state.guideMediaPath;
 
-  // Per-axis mute toggles — local to this screen (resets fresh every new
-  // session, since this screen remounts for each one) but the actual
-  // muting takes effect in audio.js immediately, independent of the
-  // update cadence. See setVoiceMuted() there for why it lives there.
-  const [mutedVoices, setMutedVoices] = useState({ cello: false, viola: false, violin: false });
-  const toggleMute = (voice) => {
-    setMutedVoices((prev) => {
-      const next = { ...prev, [voice]: !prev[voice] };
-      audioService.setVoiceMuted(voice, next[voice]);
-      return next;
-    });
-  };
-
   // Mirrors the original's initAudio()-on-start / silenceAudio() on end.
   // Unlike the original (and unlike an earlier version of this port), we
   // deliberately do NOT destroy/recreate the AudioContext between sessions.
@@ -59,7 +46,7 @@ export default function RecordingScreen() {
   useEffect(() => {
     if (!audioEnabled) return undefined;
     audioService.initAudio(); // idempotent — no-ops if already built
-    setAudioHook((rx, ry, rz) => audioService.updateAudio(rx, ry, rz));
+    setAudioHook((rx, ry, rz, level, sr, freqWin) => audioService.updateAudio(rx, ry, rz, level, sr, freqWin));
     return () => {
       audioService.silenceAudio();
       setAudioHook(null);
@@ -197,37 +184,6 @@ export default function RecordingScreen() {
           </View>
         )}
 
-        {audioEnabled && (
-          <View style={[styles.muteCard, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
-            <Text style={{ color: c.tx3, fontSize: 11, marginBottom: 10 }}>SOUND — TAP TO MUTE</Text>
-            <View style={styles.muteRow}>
-              {[
-                ['cello', 'X', 'Cello', c.danger],
-                ['viola', 'Y', 'Viola', c.info],
-                ['violin', 'Z', 'Violin', c.success],
-              ].map(([voice, axis, label, color]) => {
-                const isMuted = mutedVoices[voice];
-                return (
-                  <Pressable
-                    key={voice}
-                    onPress={() => toggleMute(voice)}
-                    style={[
-                      styles.muteButton,
-                      { backgroundColor: isMuted ? c.bg3 : `${color}22`, borderColor: isMuted ? c.bd2 : color },
-                    ]}>
-                    <View style={[styles.muteDot, { backgroundColor: isMuted ? c.tx3 : color }]} />
-                    <Text style={{ color: isMuted ? c.tx3 : c.tx1, fontWeight: '600', fontSize: 14 }}>{label}</Text>
-                    <Text style={{ color: c.tx3, fontSize: 10, marginTop: 1 }}>{axis} axis</Text>
-                    <Text style={{ color: isMuted ? c.tx3 : color, fontSize: 11, fontWeight: '600', marginTop: 4 }}>
-                      {isMuted ? 'Muted' : 'On'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
         <Pressable
           onPress={handleEnd}
           style={[styles.endButton, { backgroundColor: c.bg2, borderColor: c.bd2 }]}>
@@ -271,18 +227,6 @@ const styles = StyleSheet.create({
   axisTrack: { width: '100%', height: 6, borderRadius: 3, overflow: 'hidden' },
   axisFill: { height: '100%' },
   sparkCard: { width: '90%', marginTop: 24, padding: 12, borderRadius: radii.lg, borderWidth: 1 },
-  muteCard: { width: '90%', marginTop: 20, padding: 14, borderRadius: radii.lg, borderWidth: 1 },
-  muteRow: { flexDirection: 'row', gap: 10 },
-  muteButton: {
-    flex: 1,
-    borderWidth: 1.5,
-    borderRadius: radii.lg,
-    paddingVertical: 14,
-    alignItems: 'center',
-    minHeight: 72,
-    justifyContent: 'center',
-  },
-  muteDot: { width: 10, height: 10, borderRadius: 5, marginBottom: 6 },
   sparkHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   legendRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   legendDotWrap: { flexDirection: 'row', alignItems: 'center', marginRight: 12 },
