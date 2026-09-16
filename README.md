@@ -317,6 +317,188 @@ underlying `startLevel`/`endLevel` are unrelated to the SteadyPoint
 Score and were kept as-is — worth restating since they were briefly,
 accidentally dropped mid-edit and then restored before shipping.
 
+## Calibration Mode — Phase 1 (per Calibration_Mode_Design.pdf)
+
+**Sustained-peak tracker tuning fix**: real device testing found the
+"100 Level Reached" button would enable only briefly then immediately
+disable again during genuine vigorous shaking. Verified the cause
+directly: real tremor-like motion naturally oscillates rather than
+holding a perfectly flat plateau, and the original 85%-of-peak
+tolerance combined with a hard reset-to-zero on any dip meant the
+sustain counter almost never survived a full natural oscillation cycle
+long enough to accumulate 5 continuous seconds. Confirmed with a
+synthetic test simulating realistic oscillating vigorous motion: the
+old settings never reached 5 seconds even after 9 simulated seconds of
+sustained effort. Fixed by loosening the tolerance to 60% of peak and
+replacing the hard reset with a decay (at 2x the accumulation rate) on
+a dip — reverified with the same synthetic test (now reaches the
+threshold reliably) and a genuine-stop test (still correctly decays
+back to ~0 within a few seconds, not stuck showing false progress).
+
+**"Current intensity" display fix**: was implemented incorrectly as a
+static indicator (100% filled the moment any signal existed at all,
+regardless of actual movement) rather than a live reading — confirmed
+via user testing this looked constantly full and meaningless. Now
+shows current RMS relative to the running peak found so far, updating
+live as intensity actually rises and falls.
+
+
+**Critical fix**: real testing found Active Calibration appeared to
+completely hang — no data, no live meter movement at all. Root cause:
+`CalibrationScreen.js` managed the local buffer state
+(`beginSessionBuffers()`/`stopRecordingBuffers()`) but never sent the
+actual BLE `sendCommand('START')` that tells the M5Stick's firmware to
+begin transmitting — the normal session flow in `sessionLogic.js`
+always does this, but this screen was built independently of that flow
+and the step was missed entirely. Device stayed connected but
+genuinely never sent a single packet. Fixed by adding
+`sendCommand('START')` when Active Calibration begins and
+`sendCommand('STOP')` both on successful completion and on unmount
+cleanup (so backing out mid-calibration doesn't leave the device
+streaming needlessly) — same command strings already used elsewhere.
+
+
+**Follow-up fix**: real testing surfaced a gap the design doc's mockups
+didn't address — a first-launch user has no way to reach the
+device-connect button at all (it normally lives on Home, which the
+mandatory calibration gate blocks access to), so "Calibrate Now" led
+into a flow with no way to actually connect. Fixed by adding a
+connection card directly to `CalibrationWelcomeScreen.js`, reusing the
+exact same `useBLE()`/`state.isConnected` pattern as Home's own connect
+row for consistency — and disabling "Calibrate Now" until connected,
+with the footer note changing to explain why. `CalibrationScreen.js`'s
+existing "Connect your device first" fallback (for the separate case of
+launching calibration from Settings, or a mid-flow disconnect) is
+unchanged and still needed as a safety net.
+
+Lets each user personalize `FULL_SCALE_G` and their tremor frequency
+band by physically producing their worst tremor for a few seconds,
+instead of using generic fixed defaults for everyone. Built in phases;
+this is Phase 1 (the calibration flow itself) of five agreed phases —
+Settings manual-editing UI, mid-session overflow auto-detection,
+band-pass filtering of scoring/graphs to the calibrated band, and
+retroactive historical rescoring are separate, later work.
+
+**New screens**: `CalibrationWelcomeScreen.js` (mandatory, first-launch
+only, no skip), `CalibrationScreen.js` (Setup + Active Calibration
+combined as internal phases — Setup is pure instructional copy, Active
+Calibration runs a live BLE recording), `CalibrationResultsScreen.js`
+(shows computed values, Save/Recalibrate). Reachable from Settings
+("Open Calibration"/"Recalibrate") for any subsequent recalibration.
+
+**Two new core algorithms in `dsp.js`**, both went through real,
+test-driven iteration before being trusted — not shipped on first pass:
+
+- `createSustainedPeakTracker()` — stateful, live amplitude tracker for
+  `FULL_SCALE_G`. Worked correctly from the first design; verified with
+  a ramp-hold-reach scenario and a sudden-drop-resets-the-counter case.
+- `detectSustainedFrequencyBand()` — batch analysis for the tremor
+  frequency band, run once on the full calibration recording. Went
+  through three rounds of finding and fixing real bugs via direct
+  testing: (1) an initial design tracking many individual frequency
+  bins over time required a Hann window to avoid spectral-leakage false
+  positives, and even then under-detected a realistic jittering-tremor
+  signal — redesigned around a simpler, more robust concept (single
+  dominant frequency per short time-slice, reusing the same well-tested
+  idea behind `combinedDominantFreq()`, looking for stretches of
+  mutually-consistent consecutive readings); (2) the sliding analysis
+  window itself was found to inflate a brief transient's apparent
+  duration by roughly the window's own length — a 1-second bump could
+  appear "sustained" for 3+ seconds purely from window overlap — fixed
+  by subtracting the window length from the apparent duration before
+  the sustain check; (3) near-silent recording segments produced a
+  "peak" frequency driven by floating-point noise rather than real
+  signal — the same category of bug already found and fixed twice
+  elsewhere in this project (sonification, the Dominant Freq stat),
+  fixed the same way with a minimum-signal gate. Final version verified
+  against an isolated brief transient (correctly rejected), a pure
+  steady tone (correctly detected), and a realistic randomly-jittering
+  tremor-like signal with a transient mixed in (correctly captured the
+  true band, correctly excluded the transient) before being wired in.
+
+**`rmsToLevel()` in `dsp.js`**: `NOISE_FLOOR_G` is now a configurable
+parameter (`noiseFloorG`, defaulting to `DEFAULT_NOISE_FLOOR_G`),
+matching how `fullScaleG` already worked — per the design doc, though
+not yet exposed in any UI (that's the Phase 2 Settings work; the
+setting exists in storage now, ready for that phase to read/write it).
+Not part of the calibration measurement flow itself, same as the
+design doc specifies.
+
+**Mandatory first-launch gate**: implemented via `RootNavigator.js`'s
+own `initialRouteName` (conditional on `state.settings.hasCalibrated`)
+rather than a redirect-after-mount — avoids any flicker or race
+condition, and is safe because `App.js` already gates rendering
+`RootNavigator` at all until persisted settings have fully loaded.
+
+**Critical fix for existing users**: found and fixed a real bug before
+shipping — an existing user's already-persisted settings (saved before
+these new fields existed) would restore with `hasCalibrated` and the
+new tremor-band fields simply `undefined`, which would both crash
+`SettingsScreen.js` (`undefined.toFixed`) and incorrectly force any
+*existing* user into the mandatory first-launch flow after a routine
+app update. Fixed in `persistence.js`'s `persistLoad()`: existing
+users' settings are now backfilled with the new fields on load —
+critically, `hasCalibrated` backfills to `true` for them specifically
+(not the fresh-install default of `false`), since merely having prior
+saved data at all proves this is a returning user, not someone who
+should suddenly hit a mandatory gate they'd never seen before. A
+genuinely brand-new install is unaffected by this (there's nothing to
+backfill) and still correctly gets `hasCalibrated: false`.
+
+**Deliberately not yet implemented, to avoid overpromising**: the
+design doc describes saving calibration as also retroactively
+recalculating past sessions' scores against the new `FULL_SCALE_G`.
+That's real, separate work blocked on this app not yet persisting the
+raw per-session data needed to do it (see the phasing discussion) —
+`CalibrationResultsScreen.js` only writes the new settings; its copy
+was deliberately written to not claim historical rescoring happens.
+
+## Dominant Freq stat — same noise-during-stillness bug, separately fixed
+Confirmed via real user testing (not the sonification investigation
+above — a genuinely separate, older calculation): the "Dominant Freq"
+stat (`state.liveFreqHz` in `liveSession.js`, saved as `session.freq`)
+had the exact same category of bug as the sonification frequency
+detector — reporting noise as a "dominant frequency" during stillness,
+since its `dominantFreq()` function has no protection against this.
+
+This one is more consequential, since the saved value isn't just a
+live display — it's persisted with every session and shown in
+Summary/Session Detail. Confirmed directly: a session with vigorous
+~10Hz motion, ended after holding the device still for the final ~5
+seconds, saved a meaningless ~1Hz reading instead of anything
+reflecting the actual session — because the saved value is a snapshot
+of whatever the live reading happened to be at the *exact instant*
+the session ends, and that instant fell during the stillness.
+
+Fixed the same way as sonification's version: gated behind
+`MIN_INTENSITY_FOR_DOMINANT_FREQ = 8` in `liveSession.js` (same
+threshold value, for consistency) — below that, `liveFreqHz` is left
+at its last real value rather than updated with noise. This means
+both the live display and the end-of-session snapshot now reflect
+genuine last-active motion, even if the session happens to end during
+a still moment. `dominantFreq()` itself (the 1-15Hz-restricted,
+Y-axis-only function) is unchanged — only how/when its result gets
+applied to `liveFreqHz` changed. This function has exactly one call
+site, so the fix is fully contained.
+
+**Follow-up**: also replaced the Y-axis-only `dominantFreq()` call
+with `combinedDominantFreq()` (the same all-three-axis function
+sonification uses, via the same longer `freqWinX/Y/Z` window) — a
+rotation or tremor that happens to show up mostly on a different axis
+was previously missed entirely just because of how the device was
+oriented. Verified directly with a synthetic test: motion at 6Hz
+concentrated on the X/Z axes with a nearly-flat Y axis is now
+correctly detected, where the old Y-axis-only version would have seen
+mostly noise. `combinedDominantFreq()`'s own search is intentionally
+unrestricted (see dsp.js), so `DOMINANT_FREQ_MIN_HZ`/
+`DOMINANT_FREQ_MAX_HZ` (1-15Hz) clamp the result afterward to the same
+reasonable clinical range the old function used to enforce internally.
+`dominantFreq()` remains exported from `dsp.js`, just unused by this
+file now — this changes how newly recorded sessions compute this stat,
+so it isn't directly comparable to sessions recorded before this fix,
+similar to the `fullScaleG` sensitivity setting's own comparability
+caveat.
+
 ## Sonification frequency-detection investigation
 Real device testing (metronome-guided shake tests at known BPMs,
 compared via temporary diagnostic logging) surfaced multiple issues

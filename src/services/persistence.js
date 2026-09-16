@@ -107,10 +107,30 @@ export async function persistLoad() {
     const maxPinnedId = pinnedSessions.reduce((m, s) => Math.max(m, s.id || 0), 0);
     const maxSessionId = allSessions.reduce((m, s) => Math.max(m, s.id || 0), 0);
 
+    // Backfills fields added to settings after this user's data was first
+    // saved — critically, hasCalibrated backfills to true here (not the
+    // fresh-install default of false), since reaching this point at all
+    // means a prior settings blob existed, proving this is a returning
+    // user who's already been using the app — not someone who should
+    // suddenly hit the mandatory first-launch Calibration Mode gate after
+    // simply updating. A genuinely brand-new install never reaches this
+    // line at all (see the `!map[SP_KEYS.meta]` return above), so it
+    // still correctly gets hasCalibrated: false from initialState.js.
+    const loadedSettings = map[SP_KEYS.settings] ? JSON.parse(map[SP_KEYS.settings]) : null;
+    const settings = loadedSettings
+      ? {
+          tremorBandMinHz: 3,
+          tremorBandMaxHz: 14,
+          noiseFloorG: 0.006,
+          ...loadedSettings,
+          hasCalibrated: loadedSettings.hasCalibrated ?? true,
+        }
+      : null;
+
     return {
       pinnedSessions,
       analyticsData: map[SP_KEYS.analytics] ? JSON.parse(map[SP_KEYS.analytics]) : null,
-      settings: map[SP_KEYS.settings] ? JSON.parse(map[SP_KEYS.settings]) : null,
+      settings,
       allSessions,
       appMode: map[SP_KEYS.mode] || 'real',
       pinnedNextId: map[SP_KEYS.pinnedNextId] ? parseInt(map[SP_KEYS.pinnedNextId], 10) : maxPinnedId + 1,

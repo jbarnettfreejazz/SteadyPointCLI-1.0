@@ -55,6 +55,10 @@ export function buildInitialState(appMode = 'real') {
       defaultType: 'guided',
       fullScaleG: 0.35, // "Full-scale range motion (in g) that reads as intensity 100" — see dsp.js's rmsToLevel()
       sonificationVoice: 'cello', // which single instrument carries the combined-axis sonification signal
+      tremorBandMinHz: 3, // Calibration Mode — see Calibration_Mode_Design.pdf
+      tremorBandMaxHz: 14,
+      noiseFloorG: 0.006, // not measured by Calibration Mode itself; manually editable only (Phase 2)
+      hasCalibrated: false, // gates the mandatory first-launch calibration — see RootNavigator.js
     },
 
     // BLE connection status (not packet data — see liveSession.js)

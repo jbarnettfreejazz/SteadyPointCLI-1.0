@@ -1,4 +1,4 @@
-import { rmsOf, std, dominantFreq, rmsToLevel, DEFAULT_FULL_SCALE_G } from '../utils/dsp';
+import { rmsOf, std, combinedDominantFreq, rmsToLevel, DEFAULT_FULL_SCALE_G } from '../utils/dsp';
 
 // ══════════════════════════════════════════════════════
 // LIVE SESSION STORE
@@ -25,6 +25,18 @@ const ROLL_WIN = 100; // ~2s at 50Hz
 // for a stable FFT read; this gives low frequencies more complete
 // cycles to work with.
 const FREQ_WIN = 250; // ~5s at 50Hz
+// Also now used by the Dominant Freq stat below (previously Y-axis-only,
+// short-window) — same window, same combinedDominantFreq(), for
+// consistency and to remove the old calculation's dependency on device
+// orientation.
+
+// Clamps the Dominant Freq stat to the same reasonable clinical range the
+// old Y-axis-only dominantFreq() used to enforce internally via its
+// search restriction — combinedDominantFreq()'s own search is
+// intentionally unrestricted (see dsp.js), so this stays as an
+// after-the-fact sanity check here instead.
+const DOMINANT_FREQ_MIN_HZ = 1;
+const DOMINANT_FREQ_MAX_HZ = 15;
 
 function freshState() {
   return {
@@ -233,9 +245,29 @@ function updateLiveMetrics() {
   state.liveZpct = Math.min(100, Math.round((sdZ / sdMax) * 25)); // kept visually low, matches original
 
   const sr = state.packetTimes.length > 1 ? state.packetTimes.length / 2 : 50;
-  if (state.recentX.length >= 64) {
-    const df = dominantFreq(state.recentY, sr); // Y axis carries the most energy
-    if (df > 0) state.liveFreqHz = df;
+  // MIN_INTENSITY_FOR_DOMINANT_FREQ mirrors the same threshold validated
+  // for sonification's frequency detection (see audio.js) — confirmed via
+  // real testing that without this gate, this calculation reports
+  // noise-driven garbage as a "dominant frequency" during stillness (a
+  // session ending on a few seconds of held-still motion saved a
+  // meaningless low reading instead of reflecting the session's real,
+  // active movement). Below threshold, leave liveFreqHz at its last real
+  // value rather than update it with noise — this also means the
+  // snapshot saved at session end reflects genuine last-active motion,
+  // not whatever happened in a stillness moment right before ending.
+  const MIN_INTENSITY_FOR_DOMINANT_FREQ = 8;
+  if (state.recentX.length >= 64 && tremorLevel >= MIN_INTENSITY_FOR_DOMINANT_FREQ) {
+    // Uses all three axes (via the same longer window built for
+    // sonification), not just Y — a rotation/tremor that happens to show
+    // up mostly on a different axis is no longer missed just because of
+    // how the device is oriented. DOMINANT_FREQ_MIN/MAX_HZ clamps the
+    // result to the same reasonable clinical range dominantFreq() used
+    // to enforce internally via its search restriction, since
+    // combinedDominantFreq()'s own search is intentionally unrestricted.
+    const combined = combinedDominantFreq(state.freqWinX, state.freqWinY, state.freqWinZ, sr, 100);
+    if (combined != null && combined >= DOMINANT_FREQ_MIN_HZ && combined <= DOMINANT_FREQ_MAX_HZ) {
+      state.liveFreqHz = parseFloat(combined.toFixed(1));
+    }
   }
 
   if (state.displayLevel < 20) state.liveSev = 'None';

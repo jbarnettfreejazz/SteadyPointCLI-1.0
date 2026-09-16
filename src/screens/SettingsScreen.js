@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { DEFAULT_FULL_SCALE_G } from '../utils/dsp';
@@ -20,6 +21,7 @@ const VOICE_OPTIONS = [
 
 export default function SettingsScreen() {
   const c = useTheme();
+  const navigation = useNavigation();
   const { state, actions } = useStore();
   const currentValue = state.settings.fullScaleG ?? DEFAULT_FULL_SCALE_G;
   const currentVoice = state.settings.sonificationVoice ?? 'cello';
@@ -64,6 +66,34 @@ export default function SettingsScreen() {
           </Text>
         </View>
 
+        <Text style={[styles.sectionLabel, { color: c.tx3, marginTop: 20 }]}>CALIBRATION</Text>
+        <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Tremor Measurement</Text>
+          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
+            Measures your own "level 100" and tremor frequency range directly, by having you produce your biggest
+            tremor for a few seconds — more accurate than picking a preset above.
+          </Text>
+
+          <View style={[styles.calibRow, { borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx2, fontSize: 13 }}>Full scale (level 100)</Text>
+            <Text style={{ color: c.tx1, fontSize: 13, fontWeight: '600' }}>{state.settings.fullScaleG.toFixed(2)} g</Text>
+          </View>
+          <View style={[styles.calibRow, { borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx2, fontSize: 13 }}>Tremor band</Text>
+            <Text style={{ color: c.tx1, fontSize: 13, fontWeight: '600' }}>
+              {state.settings.tremorBandMinHz.toFixed(1)}-{state.settings.tremorBandMaxHz.toFixed(1)} Hz
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={() => navigation.navigate('calibration', { fromWelcome: false })}
+            style={[styles.calibButton, { borderColor: c.info }]}>
+            <Text style={{ color: c.info, fontWeight: '600' }}>
+              {state.settings.hasCalibrated ? 'Recalibrate' : 'Open Calibration'}
+            </Text>
+          </Pressable>
+        </View>
+
         <Text style={[styles.sectionLabel, { color: c.tx3, marginTop: 20 }]}>SONIFICATION</Text>
         <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
           <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Instrument</Text>
@@ -106,4 +136,11 @@ const styles = StyleSheet.create({
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pill: { borderWidth: 1.5, borderRadius: radii.lg, paddingHorizontal: 16, paddingVertical: 10 },
   divider: { height: 1, marginVertical: 14 },
+  calibRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+  },
+  calibButton: { borderWidth: 1.5, borderRadius: radii.lg, paddingVertical: 12, alignItems: 'center', marginTop: 14 },
 });
