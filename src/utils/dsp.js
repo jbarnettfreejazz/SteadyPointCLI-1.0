@@ -190,6 +190,14 @@ export function createSustainedPeakTracker({ toleranceRatio = 0.6, sustainSecond
   let runningPeak = 0;
   let sustainedMs = 0;
   let lastTickMs = null;
+  // Recent (rms, timestamp) readings within the last sustainSeconds —
+  // used to compute what was actually sustained (see sustainedValue
+  // below), rather than reporting the all-time peak, which could be an
+  // unrepresentative one-off spike (a bump, a sudden jerk) rather than
+  // genuinely sustained effort. Per the design doc: "The RMS value
+  // sustained during that 5-second window becomes the candidate value
+  // for FULL_SCALE_G" — not "the highest value ever seen."
+  let recentReadings = [];
 
   return {
     update(rms, nowMs) {
@@ -205,9 +213,22 @@ export function createSustainedPeakTracker({ toleranceRatio = 0.6, sustainSecond
       // than accumulation.
       sustainedMs = withinTolerance ? sustainedMs + dt : Math.max(0, sustainedMs - dt * decayMultiplier);
       const targetMs = sustainSeconds * 1000;
+
+      recentReadings.push({ rms, atMs: nowMs });
+      const cutoff = nowMs - targetMs;
+      recentReadings = recentReadings.filter((r) => r.atMs >= cutoff);
+      // Average of the recent readings that actually qualified as "at
+      // the peak" (within tolerance) — excludes any dips that happened
+      // to fall within this recent window, and excludes an old spike
+      // once it's aged out of the recent-readings window even though
+      // runningPeak itself never decreases.
+      const qualifying = recentReadings.filter((r) => r.rms >= runningPeak * toleranceRatio);
+      const sustainedValue = qualifying.length > 0 ? qualifying.reduce((s, r) => s + r.rms, 0) / qualifying.length : runningPeak;
+
       return {
         runningPeak,
         currentRms: rms,
+        sustainedValue,
         sustainedMs: Math.min(sustainedMs, targetMs),
         sustainedSeconds: Math.min(sustainedMs, targetMs) / 1000,
         reached: sustainedMs >= targetMs,
@@ -217,6 +238,7 @@ export function createSustainedPeakTracker({ toleranceRatio = 0.6, sustainSecond
       runningPeak = 0;
       sustainedMs = 0;
       lastTickMs = null;
+      recentReadings = [];
     },
   };
 }

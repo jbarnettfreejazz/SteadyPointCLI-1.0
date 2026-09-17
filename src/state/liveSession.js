@@ -30,6 +30,14 @@ const FREQ_WIN = 250; // ~5s at 50Hz
 // consistency and to remove the old calculation's dependency on device
 // orientation.
 
+// Dedicated, short window for Calibration Mode's amplitude RMS
+// calculation — per the design doc, which specifically calls for "a
+// short window (about 300ms)". Was previously (incorrectly) computed
+// over the much longer ROLL_WIN buffer, which would dilute a brief
+// (under-half-a-second) tensing action with surrounding calmer motion,
+// likely under-reporting the user's true peak effort.
+const SHORT_WIN = 15; // ~300ms at 50Hz
+
 // Clamps the Dominant Freq stat to the same reasonable clinical range the
 // old Y-axis-only dominantFreq() used to enforce internally via its
 // search restriction — combinedDominantFreq()'s own search is
@@ -48,6 +56,11 @@ function freshState() {
     freqWinX: [],
     freqWinY: [],
     freqWinZ: [],
+    // Separate, short-window buffers just for Calibration Mode's
+    // amplitude RMS calculation — see SHORT_WIN above for why.
+    shortWinX: [],
+    shortWinY: [],
+    shortWinZ: [],
     dispX: Array(SPARK_LEN).fill(0),
     dispY: Array(SPARK_LEN).fill(0),
     dispZ: Array(SPARK_LEN).fill(0),
@@ -151,6 +164,15 @@ export function pushPacket(ax, ay, az) {
     state.freqWinX.shift();
     state.freqWinY.shift();
     state.freqWinZ.shift();
+  }
+
+  state.shortWinX.push(ax);
+  state.shortWinY.push(ay);
+  state.shortWinZ.push(az);
+  if (state.shortWinX.length > SHORT_WIN) {
+    state.shortWinX.shift();
+    state.shortWinY.shift();
+    state.shortWinZ.shift();
   }
 
   state.dispX = [...state.dispX.slice(-(SPARK_LEN - 1)), ax];

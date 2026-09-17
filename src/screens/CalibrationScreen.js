@@ -22,7 +22,7 @@ export default function CalibrationScreen({ route }) {
   const fromWelcome = route?.params?.fromWelcome === true;
 
   const [phase, setPhase] = useState('setup'); // 'setup' | 'active'
-  const [meterState, setMeterState] = useState({ runningPeak: 0, currentRms: 0, sustainedSeconds: 0, reached: false });
+  const [meterState, setMeterState] = useState({ runningPeak: 0, currentRms: 0, sustainedValue: 0, sustainedSeconds: 0, reached: false });
   const trackerRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -45,15 +45,15 @@ export default function CalibrationScreen({ route }) {
 
   const startActive = () => {
     trackerRef.current = createSustainedPeakTracker();
-    setMeterState({ runningPeak: 0, currentRms: 0, sustainedSeconds: 0, reached: false });
+    setMeterState({ runningPeak: 0, currentRms: 0, sustainedValue: 0, sustainedSeconds: 0, reached: false });
     live.beginSessionBuffers();
     sendCommand('START');
     setPhase('active');
 
     pollRef.current = setInterval(() => {
       const s = live.getLiveState();
-      if (s.recentX.length < 8) return;
-      const rms = rmsOf(s.recentX, s.recentY, s.recentZ);
+      if (s.shortWinX.length < 8) return;
+      const rms = rmsOf(s.shortWinX, s.shortWinY, s.shortWinZ);
       const result = trackerRef.current.update(rms, Date.now());
       setMeterState(result);
     }, 300);
@@ -66,7 +66,7 @@ export default function CalibrationScreen({ route }) {
     }
     const { buffer } = live.stopRecordingBuffers();
     sendCommand('STOP');
-    const fullScaleG = meterState.runningPeak;
+    const fullScaleG = meterState.sustainedValue;
     const band = detectSustainedFrequencyBand(buffer);
 
     navigation.replace('calibrationResults', {
@@ -178,6 +178,7 @@ export default function CalibrationScreen({ route }) {
         <View style={[styles.track, { backgroundColor: c.bg3 }]}>
           <View style={[styles.fill, { width: `${meterPct}%`, backgroundColor: meterState.reached ? c.success : c.warning }]} />
         </View>
+        <Text style={{ color: c.tx3, fontSize: 11, marginTop: 4 }}>This is your longest, most intense tremor so far.</Text>
 
         <View style={[styles.meterRow, { marginTop: 18 }]}>
           <Text style={{ color: c.tx2, fontSize: 13 }}>Sustained at peak</Text>
