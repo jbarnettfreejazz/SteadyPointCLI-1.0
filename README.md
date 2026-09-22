@@ -317,7 +317,114 @@ underlying `startLevel`/`endLevel` are unrelated to the SteadyPoint
 Score and were kept as-is — worth restating since they were briefly,
 accidentally dropped mid-edit and then restored before shipping.
 
+## Continuous Session
+
+**Redesigned from a pre-session toggle to an in-session one**: the
+Quick Start card's sonification switch (added right after the initial
+feature) was removed per explicit follow-up request — Continuous
+Session now always starts silent (`feedbackType: 'visual'`), with a
+new toggle on `RecordingScreen.js` (shown only for continuous
+sessions, via the existing `isContinuous` check) letting the user turn
+sonification on or off *while the session is running*. This needed no
+new audio-wiring mechanism: the existing effect that sets up the audio
+hook already depends on `audioEnabled` (derived from
+`state.config.feedbackType`), so flipping the switch just calls the
+same `actions.updateConfig({ feedbackType: ... })` used elsewhere, and
+that existing effect automatically cleans up or re-registers the
+sonification hook in response. The now-unused
+`continuousSessionSoundOn` setting from the prior design (and its
+backfill entry) was removed — harmless if it lingers in an existing
+user's already-saved data, just no longer written for new/backfilled
+settings.
+
+A new Quick Start button for sessions with no fixed duration, running
+until manually ended — for testers who want to monitor tremors on an
+ongoing basis rather than a preset 5/10/20-minute block. First
+iteration: no sound, no guide, per explicit scope.
+
+Reuses existing infrastructure rather than adding new mechanisms:
+- `duration: null` on the new `CONTINUOUS_TEMPLATE` (`HomeScreen.js`)
+  makes `totalSeconds` falsy in `startSession()`/`startTimers()`
+  (`duration * 60` → `0`), and `startTimers()`'s auto-completion check
+  (`if (totalSeconds && ...)`) already skips entirely when that's
+  falsy — verified this directly rather than assuming. No new timer
+  logic needed.
+- Launched via the same `quickStart()` function every other Quick
+  Start template already uses, so the existing "not connected" alert
+  in `startSession()` applies automatically — no new connection-check
+  code needed, per explicit request to reuse existing error handling.
+- `RecordingScreen.js`'s countdown and progress bar (which would
+  otherwise show a meaningless 00:00/empty bar, or divide by zero for
+  the progress fraction) are hidden for continuous sessions —
+  elapsed time still displays and counts up normally.
+- New `InfinityIcon` added to `TabIcons.js`, matching the existing
+  icon component style.
+- `endSession()`'s saved `duration` (computed from actual elapsed
+  time, not the original config) is unaffected — a continuous session
+  saves and displays completely normally once ended.
+
+**Sonification toggle** (added after the first iteration): a switch on
+the Continuous Session card lets the user turn sonification on for
+this session type, defaulting to off. Persisted as
+`state.settings.continuousSessionSoundOn`, and computed into the
+actual `feedbackType` (`'both'`/`'visual'`) at press time rather than
+baked into the static template. The switch sits in its own row,
+outside the "start" `Pressable`, deliberately — nesting a `Switch`
+inside a `Pressable` risks the tap bubbling up and accidentally
+starting a session when the user only meant to flip the toggle.
+
+Sound state persistence for "Start Similar Session" needed no new
+code: it already worked, since `feedbackType` is a normal field on the
+saved session record and `startSimilarSession()` already reused it.
+
+**Related bug found and fixed while implementing this**: a saved
+session's `duration` is always its actual elapsed time, computed the
+same way regardless of whether the original session had a fixed
+length or was continuous — there was no way to tell them apart on the
+record. This meant "Start Similar Session" on a past Continuous
+Session would relaunch it as a **fixed-duration** session matching
+whatever length it happened to run before, not as another continuous
+one. Fixed by adding an explicit `isContinuous` flag to the session
+record (set from `!state.config.duration` before it gets overwritten
+by elapsed time), and `startSimilarSession()` now checks it — passing
+`duration: null` instead of the saved value when relaunching a
+continuous session. Backward compatible: an older session with no
+`isContinuous` field falls through to the previous (correct, since it
+was never continuous) behavior.
+
 ## Calibration Mode — Phase 1 (per Calibration_Mode_Design.pdf)
+
+
+**Spec-compliance fixes**, found via a direct line-by-line comparison
+against the design doc's text, at the user's request:
+
+1. **Short RMS window**: the design doc specifically calls for "a short
+   window (about 300ms)" for the amplitude RMS calculation — this was
+   incorrectly computed over the much longer, general-purpose ~2-second
+   rolling buffer instead, which would dilute a brief (under-half-a-
+   second) tensing action with surrounding calmer motion and likely
+   under-report the user's true peak effort. Fixed with a dedicated
+   short window (`SHORT_WIN = 15` samples, ~300ms, `shortWinX/Y/Z` in
+   `liveSession.js`), mirroring the same pattern already used for
+   sonification's longer frequency-detection window — just short
+   instead of long.
+2. **`FULL_SCALE_G` value**: the design doc says "the RMS value
+   *sustained during that 5-second window*" becomes the candidate value
+   — this was using the all-time peak RMS instead, which could be an
+   unrepresentative one-off spike (a bump, a sudden jerk) rather than
+   genuinely sustained effort. Fixed in `createSustainedPeakTracker()`:
+   now tracks recent readings and computes the average of those that
+   actually qualified as "at the peak" within the current sustain
+   window, ignoring any one-off spike once it's aged out — verified
+   directly (both in isolation and against the real, unmodified
+   production code) with a synthetic scenario: an early spike followed
+   by genuine sustained effort at a meaningfully lower level now
+   correctly reports the sustained level, not the spike.
+3. Added the requested reassurance text under the Current intensity bar
+   ("This is your longest, most intense tremor so far.") — corrected an
+   apparent typo in the requested wording (a period that would have
+   split it into a sentence fragment) to a comma.
+
 
 **Sustained-peak tracker tuning fix**: real device testing found the
 "100 Level Reached" button would enable only briefly then immediately

@@ -6,7 +6,7 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useBLE } from '../services/useBLE';
 import ScoreRing from '../components/ScoreRing';
-import { BrainIcon, BookIcon, WalkIcon } from '../components/TabIcons';
+import { BrainIcon, BookIcon, WalkIcon, InfinityIcon } from '../components/TabIcons';
 import { startSession, resetSetupConfig, loadPinnedForEdit, deletePinnedSession } from '../services/sessionLogic';
 
 // Same three quick-start templates as the original HTML's TEMPLATES const.
@@ -22,6 +22,25 @@ const TEMPLATES = [
   { name: 'Reading', activityType: 'engaged', feedbackType: 'both', guideSource: null, duration: 10, iconBg: 'bgSuccess', iconColor: 'success', Icon: BookIcon },
   { name: 'Taking a Walk', activityType: 'active', feedbackType: 'visual', guideSource: null, duration: 20, iconBg: 'bgWarning', iconColor: 'warning', Icon: WalkIcon },
 ];
+
+// Continuous Session — runs with no fixed duration until manually ended.
+// duration: null makes totalSeconds falsy in startSession()/startTimers(),
+// which already skips auto-completion entirely in that case — no new
+// timer logic needed, just relying on existing behavior. No guide, per
+// explicit scope. Always starts with feedbackType: 'visual' (sound off)
+// — sonification can be turned on mid-session instead, via a toggle on
+// RecordingScreen.js shown only for continuous sessions (not a
+// pre-session choice here anymore).
+const CONTINUOUS_TEMPLATE = {
+  name: 'Continuous Session',
+  activityType: 'engaged',
+  feedbackType: 'visual',
+  guideSource: null,
+  duration: null,
+  iconBg: 'bgInfo',
+  iconColor: 'info',
+  Icon: InfinityIcon,
+};
 
 const DAY_MS = 86400000;
 
@@ -283,6 +302,19 @@ export default function HomeScreen() {
               </Pressable>
             );
           })}
+
+          <Pressable
+            onPress={() => quickStart(CONTINUOUS_TEMPLATE)}
+            style={[styles.quickRow, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+            <View style={[styles.quickIconBox, { backgroundColor: c[CONTINUOUS_TEMPLATE.iconBg] }]}>
+              <CONTINUOUS_TEMPLATE.Icon color={c[CONTINUOUS_TEMPLATE.iconColor]} size={20} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontSize: 14, fontWeight: '500', color: c.tx1, marginBottom: 2 }}>Continuous Session</Text>
+              <Text style={{ fontSize: 11, color: c.tx3 }}>Runs until you stop it · Sonification can be turned on during the session · No guide</Text>
+            </View>
+            <Text style={{ fontSize: 12, fontWeight: '500', color: c.info }}>Start →</Text>
+          </Pressable>
         </View>
 
         <Pressable onPress={handleConfigureNew} style={[styles.configureButton, { backgroundColor: c.tx1 }]}>

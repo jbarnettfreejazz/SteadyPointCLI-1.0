@@ -81,3 +81,11 @@ export function WalkIcon({ color = '#000', size = 22 }) {
     </Svg>
   );
 }
+
+export function InfinityIcon({ color = '#000', size = 22 }) {
+  return (
+    <Svg {...common(color, size)}>
+      <Path d="M18.178 8c-5.096 0-5.096 8-9.849 8-3.469 0-4.945-3.578-4.945-4s1.476-4 4.945-4c4.753 0 4.753 8 9.849 8 3.469 0 4.945-3.578 4.945-4s-1.476-4-4.945-4z" />
+    </Svg>
+  );
+}

@@ -156,7 +156,7 @@ export function startSimilarSession({ state, actions, navigation, session }) {
         feedbackType: session.feedbackType,
         activityType: session.activityType,
         activityNote: '',
-        duration: session.duration,
+        duration: session.isContinuous ? null : session.duration,
         customName: '',
       },
       guideMediaSource,
@@ -357,6 +357,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
     reduction: results.reduction,
     fullScaleG: results.fullScaleG,
     duration: results.duration,
+    isContinuous: !state.config.duration, // true if this session had no fixed duration — see Continuous Session
     freq: results.peakFreq,
     startLevel: results.startLevel,
     endLevel: results.endLevel,

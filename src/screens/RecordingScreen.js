@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
@@ -65,9 +65,10 @@ export default function RecordingScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasGuideTrack, state.guideMediaPath]);
 
-  const total = state.config.duration * 60;
-  const remaining = Math.max(0, total - live.elapsed);
-  const progress = Math.min(1, live.elapsed / total);
+  const isContinuous = !state.config.duration;
+  const total = isContinuous ? 0 : state.config.duration * 60;
+  const remaining = isContinuous ? 0 : Math.max(0, total - live.elapsed);
+  const progress = isContinuous ? 0 : Math.min(1, live.elapsed / total);
 
   const diam = orbSize(live.displayLevel, SCREEN_WIDTH);
   const [r, g, b] = orbRGB(live.displayLevel);
@@ -99,12 +100,14 @@ export default function RecordingScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
       <View style={styles.topBar}>
         <Text style={{ color: c.tx2, fontSize: 13 }}>{fmt(live.elapsed)}</Text>
-        <Text style={{ color: c.tx2, fontSize: 13 }}>-{fmt(remaining)}</Text>
+        {!isContinuous && <Text style={{ color: c.tx2, fontSize: 13 }}>-{fmt(remaining)}</Text>}
       </View>
 
-      <View style={[styles.progressTrack, { backgroundColor: c.bg3 }]}>
-        <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%`, backgroundColor: c.tx1 }]} />
-      </View>
+      {!isContinuous && (
+        <View style={[styles.progressTrack, { backgroundColor: c.bg3 }]}>
+          <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%`, backgroundColor: c.tx1 }]} />
+        </View>
+      )}
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.orbWrap}>
@@ -139,6 +142,17 @@ export default function RecordingScreen() {
           <Text style={[styles.sevLabel, { color: severityColor }]}>{live.liveSev}</Text>
           <Text style={{ color: c.tx3, fontSize: 12 }}>{live.displayLevel}% intensity</Text>
         </View>
+
+        {isContinuous && (
+          <View style={[styles.soundToggleRow, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx1, fontSize: 14, fontWeight: '500' }}>Sonification</Text>
+            <Switch
+              value={audioEnabled}
+              onValueChange={(on) => actions.updateConfig({ feedbackType: on ? 'both' : 'visual' })}
+              trackColor={{ false: c.bd2, true: c.info }}
+            />
+          </View>
+        )}
 
         <Text style={{ color: c.tx2, fontSize: 13, marginTop: 4, textAlign: 'center' }}>
           {live.liveFreqHz > 0 ? `${live.liveFreqHz.toFixed(1)} Hz` : '—'}
@@ -221,6 +235,17 @@ const styles = StyleSheet.create({
   orb: { alignItems: 'center', justifyContent: 'center' },
   orbNum: { color: '#fff', fontSize: 32, fontWeight: '700' },
   sevRow: { flexDirection: 'row', alignItems: 'baseline', gap: 10 },
+  soundToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '90%',
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+  },
   sevLabel: { fontSize: 18, fontWeight: '700' },
   axisRow: { flexDirection: 'row', gap: 16, marginTop: 24, width: '80%' },
   axisItem: { flex: 1, alignItems: 'center' },
