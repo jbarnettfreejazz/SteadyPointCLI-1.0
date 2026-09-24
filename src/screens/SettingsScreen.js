@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { DEFAULT_FULL_SCALE_G } from '../utils/dsp';
+import { shareCalibrationLog } from '../services/calibrationLogger';
 
 // Matches the team's parallel progressive web app's Settings > Sensitivity
 // section, for consistency across platforms — see that app's screenshot.
@@ -25,6 +26,14 @@ export default function SettingsScreen() {
   const { state, actions } = useStore();
   const currentValue = state.settings.fullScaleG ?? DEFAULT_FULL_SCALE_G;
   const currentVoice = state.settings.sonificationVoice ?? 'cello';
+
+  const handleShareLog = async () => {
+    try {
+      await shareCalibrationLog();
+    } catch (e) {
+      Alert.alert('Nothing to share yet', e.message || 'Please try again.');
+    }
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
@@ -91,6 +100,10 @@ export default function SettingsScreen() {
             <Text style={{ color: c.info, fontWeight: '600' }}>
               {state.settings.hasCalibrated ? 'Recalibrate' : 'Open Calibration'}
             </Text>
+          </Pressable>
+
+          <Pressable onPress={handleShareLog} style={[styles.calibButton, { borderColor: c.bd2, marginTop: 8 }]}>
+            <Text style={{ color: c.tx2, fontWeight: '600' }}>Share Calibration Log</Text>
           </Pressable>
         </View>
 

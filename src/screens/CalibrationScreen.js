@@ -7,8 +7,20 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
 import * as live from '../state/liveSession';
-import { rmsOf, createSustainedPeakTracker, detectSustainedFrequencyBand } from '../utils/dsp';
+import { rmsOf, createSustainedPeakTracker, detectSustainedFrequencyBand, combinedDominantFreq } from '../utils/dsp';
 import { sendCommand } from '../services/ble';
+import { logCalibration } from '../services/calibrationLogger';
+
+// Flip to true to log calibration data: the current baseline settings
+// when calibration starts, each raw RMS reading and tracker state during
+// Active Calibration, and the final computed values when calibration
+// completes. Logs to both the console (for local Xcode-connected
+// testing) and a file via calibrationLogger.js (the only practical way
+// to get this data back from a remote TestFlight tester, who has no
+// Metro/debugger connection to see console.log() output) — see that
+// file's own comments for why. Matches the same toggleable-flag pattern
+// as SONIFICATION_DEBUG_LOGGING in audio.js.
+const CALIBRATION_DEBUG_LOGGING = true;
 
 // Calibration Mode Screens 1 (Setup), 2 (Active Calibration — building to
 // peak) and 2b (peak confirmed) — see Calibration_Mode_Design.pdf.
@@ -44,6 +56,19 @@ export default function CalibrationScreen({ route }) {
   }, []);
 
   const startActive = () => {
+    if (CALIBRATION_DEBUG_LOGGING) {
+      const msg =
+        'baseline settings — FULL_SCALE_G=' +
+        state.settings.fullScaleG +
+        ' TREMOR_BAND_MIN_HZ=' +
+        state.settings.tremorBandMinHz +
+        ' TREMOR_BAND_MAX_HZ=' +
+        state.settings.tremorBandMaxHz +
+        ' NOISE_FLOOR_G=' +
+        state.settings.noiseFloorG;
+      console.log('[calibration]', msg);
+      logCalibration(msg);
+    }
     trackerRef.current = createSustainedPeakTracker();
     setMeterState({ runningPeak: 0, currentRms: 0, sustainedValue: 0, sustainedSeconds: 0, reached: false });
     live.beginSessionBuffers();
@@ -55,6 +80,42 @@ export default function CalibrationScreen({ route }) {
       if (s.shortWinX.length < 8) return;
       const rms = rmsOf(s.shortWinX, s.shortWinY, s.shortWinZ);
       const result = trackerRef.current.update(rms, Date.now());
+
+      // Live frequency reading, for visibility into what's being detected
+      // as the recording progresses — purely informational here; the
+      // actual frequency band saved by calibration is computed as a
+      // batch analysis over the whole recording once it completes (see
+      // handleLevelReached below), not from this live value. Gated
+      // behind a minimum RMS threshold — same lesson learned (and
+      // fixed) three times already elsewhere in this project: without
+      // real signal, this would otherwise report noise as a meaningful
+      // frequency. MIN_RMS_FOR_LIVE_FREQ matches the threshold already
+      // validated inside detectSustainedFrequencyBand() for the same
+      // purpose.
+      const MIN_RMS_FOR_LIVE_FREQ = 0.01;
+      let liveFreqHz = null;
+      if (rms >= MIN_RMS_FOR_LIVE_FREQ) {
+        const sr = s.packetTimes.length > 1 ? s.packetTimes.length / 2 : 50;
+        liveFreqHz = combinedDominantFreq(s.freqWinX, s.freqWinY, s.freqWinZ, sr, 100);
+      }
+
+      if (CALIBRATION_DEBUG_LOGGING) {
+        const msg =
+          'rms=' +
+          rms.toFixed(4) +
+          ' runningPeak=' +
+          result.runningPeak.toFixed(4) +
+          ' sustainedValue=' +
+          result.sustainedValue.toFixed(4) +
+          ' sustainedSeconds=' +
+          result.sustainedSeconds.toFixed(1) +
+          ' reached=' +
+          result.reached +
+          ' liveFreqHz=' +
+          (liveFreqHz != null ? liveFreqHz.toFixed(2) : 'null');
+        console.log('[calibration]', msg);
+        logCalibration(msg);
+      }
       setMeterState(result);
     }, 300);
   };
@@ -68,6 +129,27 @@ export default function CalibrationScreen({ route }) {
     sendCommand('STOP');
     const fullScaleG = meterState.sustainedValue;
     const band = detectSustainedFrequencyBand(buffer);
+    const newTremorBandMinHz = band ? Math.max(0.5, band.minHz - 1) : state.settings.tremorBandMinHz;
+    const newTremorBandMaxHz = band ? band.maxHz + 1 : state.settings.tremorBandMaxHz;
+
+    if (CALIBRATION_DEBUG_LOGGING) {
+      const msg =
+        'final computed values — FULL_SCALE_G=' +
+        fullScaleG.toFixed(4) +
+        ' measuredBand=' +
+        (band ? `${band.minHz.toFixed(2)}-${band.maxHz.toFixed(2)}Hz` : 'none detected') +
+        ' TREMOR_BAND_MIN_HZ=' +
+        newTremorBandMinHz.toFixed(2) +
+        ' TREMOR_BAND_MAX_HZ=' +
+        newTremorBandMaxHz.toFixed(2) +
+        ' NOISE_FLOOR_G=' +
+        state.settings.noiseFloorG +
+        ' (unchanged — not measured by calibration)' +
+        ' recordingSamples=' +
+        buffer.length;
+      console.log('[calibration]', msg);
+      logCalibration(msg);
+    }
 
     navigation.replace('calibrationResults', {
       fullScaleG,
@@ -76,8 +158,8 @@ export default function CalibrationScreen({ route }) {
       // tremor range due to measurement noise. Falls back to the current
       // settings' band if nothing sustained was detected (e.g. too short
       // or too gentle a recording) rather than saving something empty.
-      tremorBandMinHz: band ? Math.max(0.5, band.minHz - 1) : state.settings.tremorBandMinHz,
-      tremorBandMaxHz: band ? band.maxHz + 1 : state.settings.tremorBandMaxHz,
+      tremorBandMinHz: newTremorBandMinHz,
+      tremorBandMaxHz: newTremorBandMaxHz,
       measuredBand: band,
       fromWelcome,
     });

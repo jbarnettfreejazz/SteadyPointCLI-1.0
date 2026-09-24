@@ -317,6 +317,61 @@ underlying `startLevel`/`endLevel` are unrelated to the SteadyPoint
 Score and were kept as-is — worth restating since they were briefly,
 accidentally dropped mid-edit and then restored before shipping.
 
+**Follow-up**: `console.log()` alone isn't useful once this reaches
+TestFlight — a Release build has no Metro/debugger attached to receive
+that output, so it either goes nowhere visible, or at best to the
+device's low-level system log (which would need a tester's physical
+phone connected to a Mac with Xcode to view, same as retrieving the
+earlier crash log — not realistic for a remote tester). Added a new
+`src/services/calibrationLogger.js`: writes the same log lines to an
+actual file (`calibration-log.txt` in the app's Documents directory,
+via `react-native-fs`, already a project dependency) alongside the
+existing console output, plus a "Share Calibration Log" button in
+Settings that opens the iOS share sheet (AirDrop, email, Files, etc.)
+so a tester can get the file off their device without any special
+tools. Used React Native's own built-in `Share` API for this —
+verified directly (both against the official docs and the actual
+installed package) that its `url` option explicitly supports local
+`file://` URLs on iOS, so no new native dependency was needed.
+
+**Follow-up**: added a live `liveFreqHz` reading to each ~300ms log
+line during Active Calibration, on request — reuses the same
+already-validated `combinedDominantFreq()` used for sonification/the
+Dominant Freq stat, computed from the longer `freqWinX/Y/Z` buffers
+(not the short amplitude window). Gated behind a minimum RMS threshold
+(`MIN_RMS_FOR_LIVE_FREQ = 0.01`, matching the one already validated
+inside `detectSustainedFrequencyBand()`) so it correctly logs `null`
+rather than a noise-driven false reading before the user starts
+producing real tremor — the same lesson already learned and fixed
+three times elsewhere in this project. Purely informational: the
+actual frequency band saved by calibration still comes from the batch
+analysis over the whole recording in `handleLevelReached()`, unchanged.
+
+## Calibration debug logging
+Added `CALIBRATION_DEBUG_LOGGING` in `CalibrationScreen.js`, matching
+the same toggleable-flag pattern already established for sonification
+(`SONIFICATION_DEBUG_LOGGING` in `audio.js`). **Currently set to
+`true`** for this delivery, since it was requested to actively debug
+an upcoming test — flip to `false` once done, same lifecycle as the
+sonification logging had.
+
+Logs three things, all under a `[calibration]` prefix:
+- **Baseline settings** once, when Active Calibration begins:
+  `FULL_SCALE_G`, `TREMOR_BAND_MIN_HZ`, `TREMOR_BAND_MAX_HZ`,
+  `NOISE_FLOOR_G` — all read from `state.settings`, i.e. whatever was
+  in effect *before* this calibration attempt
+- **Every raw reading and tracker state** during Active Calibration
+  (every ~300ms, matching the existing poll cadence): the raw RMS
+  value, the running peak, the currently-sustained value, sustained
+  seconds, and whether the threshold's been reached
+- **Final computed values** once, when calibration completes: the new
+  `FULL_SCALE_G`, the raw measured frequency band (or "none detected"),
+  the derived `TREMOR_BAND_MIN_HZ`/`MAX_HZ` (after the ±1Hz buffer),
+  `NOISE_FLOOR_G` (echoed unchanged, since calibration doesn't measure
+  it), and the total recorded sample count — verified these are the
+  exact same variables passed to the Results screen, not a separately
+  computed (and potentially divergent) copy
+
 ## Continuous Session
 
 **Redesigned from a pre-session toggle to an in-session one**: the
