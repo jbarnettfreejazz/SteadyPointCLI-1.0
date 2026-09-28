@@ -1,6 +1,24 @@
 const DAY_MS = 86400000;
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Downsamples a session's full tremor-level trace to a fixed maximum
+// number of points before persisting it with the session record — a
+// Continuous Session could run for hours, producing tens of thousands of
+// ~300ms samples, which would be wasteful to store in full and pointless
+// to render anyway (the Intensity Over Session chart is only ~320
+// logical pixels wide, so it can't meaningfully show more detail than
+// this regardless of how long the session ran). Simple stride-based
+// sampling — reasonable for a visual trend line, not precision data.
+export function downsampleTrace(trace, maxPoints = 150) {
+  if (!trace || trace.length <= maxPoints) return trace || [];
+  const step = trace.length / maxPoints;
+  const result = [];
+  for (let i = 0; i < maxPoints; i++) {
+    result.push(trace[Math.floor(i * step)]);
+  }
+  return result;
+}
+
 // Sessions that didn't meet the SteadyPoint Score's validity gate (< 10
 // tremor-level samples or < 30 seconds) have score: null — filter these
 // out before any average/max/comparison involving score, everywhere.

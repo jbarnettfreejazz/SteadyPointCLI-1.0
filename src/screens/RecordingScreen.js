@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -86,6 +86,23 @@ export default function RecordingScreen() {
   const handleEnd = () => {
     endSession({ state, actions, navigation, secs: live.elapsed, byTimer: false });
   };
+
+  // Connectivity guard — if the M5Stick is powered off or drops out of range
+  // mid-session, useBLE's onDisconnected handler flips state.isConnected to
+  // false, but nothing was watching for that here: the session just kept
+  // running with a frozen last-known intensity reading. This effect watches
+  // for a true->false transition while this screen is mounted (i.e. a
+  // session is actually in progress) and force-ends the session rather than
+  // leaving it to run forever on stale data — especially important for
+  // Continuous Sessions, which have no timer to eventually stop them.
+  const wasConnectedRef = useRef(state.isConnected);
+  useEffect(() => {
+    if (wasConnectedRef.current && !state.isConnected) {
+      endSession({ state, actions, navigation, secs: live.elapsed, byTimer: false, disconnected: true });
+    }
+    wasConnectedRef.current = state.isConnected;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isConnected]);
 
   // Auto-persist once a session lands in allSessions (endSession dispatches
   // asynchronously, so we save from an effect rather than right after calling it).

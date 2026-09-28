@@ -5,6 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import ScoreRing from '../components/ScoreRing';
+import IntensityChart from '../components/IntensityChart';
 import { sessionInsight } from '../utils/sessionStats';
 import { startSimilarSession } from '../services/sessionLogic';
 
@@ -25,10 +26,8 @@ export default function SessionDetailScreen() {
   const tags = [act, `${s.duration} min`, sound, guide];
 
   const stats = [
-    { label: 'REDUCTION', val: `${s.reduction}%`, sub: 'tremor intensity', hi: true },
-    { label: 'DURATION', val: `${s.duration} min`, sub: 'session length', hi: false },
     { label: 'DOMINANT FREQ', val: `${typeof s.freq === 'number' ? s.freq.toFixed(1) : s.freq} Hz`, sub: 'peak signal', hi: false },
-    { label: 'INTENSITY SHIFT', val: `${s.startLevel}→${s.endLevel}`, sub: 'start vs end', hi: false },
+    { label: 'DURATION', val: `${s.duration} min`, sub: 'session length', hi: false },
   ];
 
   return (
@@ -51,6 +50,14 @@ export default function SessionDetailScreen() {
             </View>
           ))}
         </View>
+
+        {s.endReason === 'disconnected' && (
+          <View style={[styles.statusBox, { backgroundColor: c.bgDanger, borderColor: c.danger }]}>
+            <Text style={{ fontSize: 12, color: c.danger, fontWeight: '600' }}>
+              ⚠️ {s.statusMessage || 'Session ended early — lost connection to the device.'}
+            </Text>
+          </View>
+        )}
 
         <View style={styles.ringWrap}>
           <ScoreRing
@@ -79,6 +86,18 @@ export default function SessionDetailScreen() {
             </View>
           ))}
         </View>
+
+        <View style={styles.chartWrap}>
+          <IntensityChart trace={s.intensityTrace} durationSec={s.duration * 60} colors={c} />
+        </View>
+
+        {s.samples > 0 && (
+          <View style={[styles.samplesRow, { backgroundColor: c.bg2 }]}>
+            <Text style={{ fontSize: 12, color: c.tx3 }}>
+              {s.samples.toLocaleString()} samples captured · {s.duration} min
+            </Text>
+          </View>
+        )}
 
         {!!s.note && (
           <View style={[styles.noteBox, { backgroundColor: c.bg2 }]}>
@@ -118,9 +137,12 @@ const styles = StyleSheet.create({
   backRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   h1: { fontSize: 20, fontWeight: '500', marginBottom: 12 },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 20 },
+  statusBox: { borderWidth: 1, borderRadius: radii.md, padding: 12, marginBottom: 20 },
   tagPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3, marginRight: 4, marginBottom: 4 },
   ringWrap: { alignItems: 'center', marginBottom: 24 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -5, marginBottom: 16 },
+  chartWrap: { marginBottom: 14 },
+  samplesRow: { padding: 10, borderRadius: radii.md, marginBottom: 16, alignItems: 'center' },
   statWrap: { width: '50%', padding: 5 },
   statBox: { borderRadius: radii.lg, padding: 12 },
   insightBox: { borderLeftWidth: 2, padding: 14, borderRadius: radii.md, marginBottom: 20 },

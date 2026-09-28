@@ -347,6 +347,92 @@ three times elsewhere in this project. Purely informational: the
 actual frequency band saved by calibration still comes from the batch
 analysis over the whole recording in `handleLevelReached()`, unchanged.
 
+## Session Complete / Session Detail redesign — Intensity Over Session chart
+Both `SummaryScreen.js` and `SessionDetailScreen.js` (same changes to
+both, per the design reference): removed the Reduction and Intensity
+Shift stat cards, leaving Dominant Freq and Duration as the only two
+(they now naturally pair up side by side in the existing 2-column
+grid, no layout change needed). Added a new "Intensity Over Session"
+chart below the stats, and moved the "N samples captured" text to
+below the chart (newly added to SessionDetailScreen, which didn't
+show a sample count before at all).
+
+**Real prerequisite found and fixed first**: the chart needs a
+per-session intensity trace over time, but this app only ever computed
+that in memory during a session (for the SteadyPoint Score's
+steadiness/consistency math) — it was never saved with the session
+record, so `SessionDetailScreen` had no way to show one later. Fixed
+by adding `intensityTrace` to the saved session record. Downsampled to
+a fixed 150 points before saving (`downsampleTrace()` in
+`sessionStats.js`) — a Continuous Session could run for hours,
+producing tens of thousands of raw ~300ms samples, which would be
+wasteful to store in full and pointless to render anyway (the chart is
+only ~320 logical pixels wide). Also found and fixed the same way:
+`samples` (the raw sample count) was computed but never actually
+persisted to the session record either — `SessionDetailScreen` had no
+access to it before this, which is why it never showed a sample count
+at all.
+
+**`IntensityChart.js`** (new component): a faithful react-native-svg
+port of the team's PWA `IntensityChart.tsx` — same geometry and
+gradient-stop math (verified directly against a synthetic trace:
+high-intensity points correctly map near the chart's top, low-intensity
+near the bottom, and the filled area path closes correctly), same
+severity-band color segmentation (None/Mild/Moderate/High), just
+translated from raw web SVG elements to their react-native-svg
+equivalents and from CSS color variables to this app's own theme
+colors. `react-native-svg` was already a project dependency (used by
+`TabIcons.js`), so no new dependency was needed. Backward compatible:
+an older session with no saved `intensityTrace` shows the same
+"not enough data" fallback the PWA original has for a too-short trace.
+
+## Connectivity guard — disconnection mid-session
+Reported bug: powering off the M5Stick during a session left the
+session running indefinitely with a frozen intensity reading — nothing
+was watching for a BLE drop once a session had started.
+
+`react-native-ble-plx`'s `onDisconnected()` was already wired up
+end-to-end (`ble.js` → `useBLE.js` → `state.isConnected` flips to
+`false` via the `BLE_DISCONNECTED` reducer case), but nothing during an
+*active session* was watching that flag — `RecordingScreen.js` only
+ever read `state.isConnected` indirectly through the live BLE packet
+stream drying up, which just froze the display rather than ending
+anything.
+
+Fixed with a small connectivity guard in `RecordingScreen.js`: a
+`useEffect` tracks the previous `state.isConnected` value in a ref and,
+on a `true → false` transition while the screen is mounted (i.e. a
+session is actually running), calls `endSession()` with a new
+`disconnected: true` flag rather than leaving the session to run
+forever — this matters most for Continuous Sessions, which have no
+timer of their own to eventually stop them.
+
+`endSession()` (`sessionLogic.js`) treats a disconnection-triggered end
+like any other end-of-session — it still stops timers/buffers, scores
+whatever was captured, and persists the session via the normal
+`addSession()` path — except:
+- it skips sending the `STOP` BLE command (the device is already gone)
+- the persisted record gets two new fields: `endReason: 'disconnected'`
+  and a human-readable `statusMessage` explaining what happened
+- navigation goes to a new dedicated `disconnected` route instead of
+  the normal `summary` (Session Complete) screen, since the user needs
+  to know *why* the session stopped, not see a congratulatory score
+
+The new `DisconnectedScreen.js` explains the app lost connection, that
+the session was already saved, and has a single "Return to Home"
+button (`navigation.navigate('home')`, same pattern `SummaryScreen.js`
+and `SetupScreen.js` already use). Registered as `disconnected` in
+`RootNavigator.js`.
+
+`SessionDetailScreen.js` shows a red status banner above the score ring
+for any session with `endReason === 'disconnected'`, using the saved
+`statusMessage`. Older sessions (no `endReason` field) render exactly
+as before — the check is additive.
+
+Not built (explicitly deferred by request): using an upcoming
+M5Stick battery-level BLE command to pre-empt a disconnection before it
+happens. This guard only reacts after the connection is already gone.
+
 ## Calibration debug logging
 Added `CALIBRATION_DEBUG_LOGGING` in `CalibrationScreen.js`, matching
 the same toggleable-flag pattern already established for sonification

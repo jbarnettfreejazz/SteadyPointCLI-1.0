@@ -15,6 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import ScoreRing from '../components/ScoreRing';
+import IntensityChart from '../components/IntensityChart';
 import { persistSave } from '../services/persistence';
 
 export default function SummaryScreen() {
@@ -42,10 +43,8 @@ export default function SummaryScreen() {
       : 'Early in your practice. Even small reductions train the neural pathways that lead to larger shifts over time.';
 
   const stats = [
-    { label: 'REDUCTION', val: `${r.reduction}%`, sub: 'tremor intensity', hi: true },
-    { label: 'DURATION', val: `${r.duration} min`, sub: 'session length', hi: false },
     { label: 'DOMINANT FREQ', val: `${typeof r.peakFreq === 'number' ? r.peakFreq.toFixed(1) : r.peakFreq} Hz`, sub: 'peak signal', hi: false },
-    { label: 'INTENSITY SHIFT', val: `${r.startLevel}→${r.endLevel}`, sub: 'start vs end', hi: false },
+    { label: 'DURATION', val: `${r.duration} min`, sub: 'session length', hi: false },
   ];
 
   const openNoteModal = () => {
@@ -105,6 +104,10 @@ export default function SummaryScreen() {
               <Text style={{ fontSize: 11, color: c.tx3 }}>{s.sub}</Text>
             </View>
           ))}
+        </View>
+
+        <View style={styles.chartWrap}>
+          <IntensityChart trace={r.intensityTrace} durationSec={r.duration * 60} colors={c} />
         </View>
 
         {r.samples > 0 && (
@@ -175,6 +178,7 @@ const styles = StyleSheet.create({
   headline: { fontSize: 20, fontWeight: '500', marginBottom: 20 },
   ringWrap: { alignItems: 'center', marginBottom: 24 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
+  chartWrap: { marginBottom: 14 },
   statBox: { width: '47%', borderRadius: radii.md, padding: 12 },
   samplesRow: { padding: 10, borderRadius: radii.md, marginBottom: 14, alignItems: 'center' },
   insightBox: { borderLeftWidth: 2, padding: 14, borderRadius: radii.md, marginBottom: 20 },

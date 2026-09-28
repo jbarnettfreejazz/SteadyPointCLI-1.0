@@ -6,6 +6,7 @@ import { persistSave } from './persistence';
 import { silenceAudio, setActiveVoice } from './audio';
 import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
+import { downsampleTrace } from '../utils/sessionStats';
 
 const ICON_MAP = {
   meditative: { icon: 'brain', iconBg: 'bgInfo', iconColor: 'info' },
@@ -227,10 +228,17 @@ export function pauseRecording() {
   live.stopRecordingBuffers();
 }
 
-export function endSession({ state, actions, navigation, secs, byTimer = false }) {
+// `disconnected: true` marks a session that was force-ended because the app
+// lost its BLE connection to the M5Stick mid-session (see RecordingScreen's
+// connectivity guard). The record gets an `endReason`/`statusMessage` pair
+// so Session Detail can explain the gap, and the caller is routed to a
+// dedicated "Disconnected from device" screen instead of the normal Summary.
+export function endSession({ state, actions, navigation, secs, byTimer = false, disconnected = false }) {
   live.stopTimers();
   const { buffer: sessionBuffer, levelTrace } = live.stopRecordingBuffers();
-  sendCommand('STOP');
+  // No point sending STOP to a device that's already gone — sendCommand()
+  // would just warn and no-op, but skipping it makes the intent explicit.
+  if (!disconnected) sendCommand('STOP');
   silenceAudio(); // stop tone immediately — screen stays mounted under Summary, so unmount-based cleanup won't fire yet
   // Also fully disconnect the audio update path — a BLE packet that
   // arrives in the brief window after sendCommand('STOP') would otherwise
@@ -323,6 +331,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
     duration: Math.max(1, Math.round(secs / 60)),
     peakFreq: liveState.liveFreqHz > 0 ? liveState.liveFreqHz : 5.7,
     samples: sessionBuffer.length,
+    intensityTrace: downsampleTrace(levelTrace),
   };
 
   actions.setResults(results);
@@ -359,6 +368,8 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
     duration: results.duration,
     isContinuous: !state.config.duration, // true if this session had no fixed duration — see Continuous Session
     freq: results.peakFreq,
+    samples: results.samples,
+    intensityTrace: results.intensityTrace,
     startLevel: results.startLevel,
     endLevel: results.endLevel,
     activityType: state.config.activityType,
@@ -372,6 +383,10 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
     // since those were the only ways new pinned entries got created).
     guidePath: state.guideMediaSource === 'phone' ? state.guideMediaPath : null,
     guideName: state.guideMediaSource === 'phone' ? state.guideMediaName : '',
+    endReason: disconnected ? 'disconnected' : 'completed',
+    statusMessage: disconnected
+      ? 'Session ended early — the app lost connection to your M5Stick device.'
+      : null,
   });
 
   // persistSave needs the *next* state (post addSession/recordCompletedSession),
@@ -379,6 +394,12 @@ export function endSession({ state, actions, navigation, secs, byTimer = false }
   // RecordingScreen's useEffect on state.allSessions for the actual save call.
 
   actions.setScoreAnim(false);
-  navigation.navigate('summary');
-  setTimeout(() => actions.setScoreAnim(true), 450);
+  if (disconnected) {
+    // Skip the normal Session Complete screen — the user needs to know
+    // *why* the session stopped, not see a celebratory summary.
+    navigation.navigate('disconnected');
+  } else {
+    navigation.navigate('summary');
+    setTimeout(() => actions.setScoreAnim(true), 450);
+  }
 }

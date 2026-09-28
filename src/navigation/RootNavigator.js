@@ -7,6 +7,7 @@ import MainTabs from './MainTabs';
 import SetupScreen from '../screens/SetupScreen';
 import RecordingScreen from '../screens/RecordingScreen';
 import SummaryScreen from '../screens/SummaryScreen';
+import DisconnectedScreen from '../screens/DisconnectedScreen';
 import SessionDetailScreen from '../screens/SessionDetailScreen';
 import SessionHistoryScreen from '../screens/SessionHistoryScreen';
 import ArticleScreen from '../screens/ArticleScreen';
@@ -39,6 +40,7 @@ export default function RootNavigator() {
         <Stack.Screen name="setup" component={SetupScreen} />
         <Stack.Screen name="recording" component={RecordingScreen} />
         <Stack.Screen name="summary" component={SummaryScreen} />
+        <Stack.Screen name="disconnected" component={DisconnectedScreen} />
         <Stack.Screen name="sessionDetail" component={SessionDetailScreen} />
         <Stack.Screen name="sessionHistory" component={SessionHistoryScreen} />
         <Stack.Screen name="article" component={ArticleScreen} />
