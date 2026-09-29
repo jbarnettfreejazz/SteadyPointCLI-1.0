@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
+import { persistSave } from '../services/persistence';
 
 // Calibration Mode Screen 3 — Results & Save. See
 // Calibration_Mode_Design.pdf, Section 3 (Screen 3) and Section 4.
@@ -18,16 +19,25 @@ import { useStore } from '../state/StoreContext';
 export default function CalibrationResultsScreen({ route }) {
   const c = useTheme();
   const navigation = useNavigation();
-  const { actions } = useStore();
+  const { state, actions } = useStore();
   const { fullScaleG, tremorBandMinHz, tremorBandMaxHz, measuredBand, fromWelcome } = route.params;
 
-  const handleSave = () => {
-    actions.updateSettings({
+  const handleSave = async () => {
+    const patch = {
       fullScaleG,
       tremorBandMinHz,
       tremorBandMaxHz,
       hasCalibrated: true,
-    });
+      lastCalibratedAt: new Date().toISOString(),
+    };
+    actions.updateSettings(patch);
+    // Explicit persistSave here (rather than relying on the next
+    // session-end save to opportunistically carry this along) — the whole
+    // point of lastCalibratedAt is to survive an app restart so the
+    // recalibration nudge (see HomeScreen.js) stays accurate, and dispatch
+    // above is async, so `state` here is still the pre-update snapshot —
+    // same pattern used by savePinnedSession()/SummaryScreen.js elsewhere.
+    await persistSave({ ...state, settings: { ...state.settings, ...patch } });
     navigation.reset({ index: 0, routes: [{ name: 'mainTabs' }] });
   };
 

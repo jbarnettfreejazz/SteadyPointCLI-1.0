@@ -59,6 +59,7 @@ export function buildInitialState(appMode = 'real') {
       tremorBandMaxHz: 14,
       noiseFloorG: 0.006, // not measured by Calibration Mode itself; manually editable only (Phase 2)
       hasCalibrated: false, // gates the mandatory first-launch calibration — see RootNavigator.js
+      lastCalibratedAt: null, // ISO timestamp of the last completed Calibration Mode run — see HomeScreen.js's recalibration nudge
     },
 
     // BLE connection status (not packet data — see liveSession.js)

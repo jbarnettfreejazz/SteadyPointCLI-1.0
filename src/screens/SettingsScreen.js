@@ -7,12 +7,22 @@ import { useStore } from '../state/StoreContext';
 import { DEFAULT_FULL_SCALE_G } from '../utils/dsp';
 import { shareCalibrationLog } from '../services/calibrationLogger';
 
-// Matches the team's parallel progressive web app's Settings > Sensitivity
-// section, for consistency across platforms — see that app's screenshot.
+// Formerly its own "SENSITIVITY" section; folded into CALIBRATION below
+// since both control the exact same fullScaleG setting — this is just the
+// manual/quick way to set it, vs. the Tremor Measurement wizard's
+// automatic/more-accurate way. Matches the team's parallel progressive web
+// app's Settings > Sensitivity presets, for consistency across platforms.
 // One deliberate difference: keeps our own tuned 0.35g (from actual
 // on-device calibration earlier this project) in place of the PWA's 0.3g,
 // at the user's explicit request, rather than adopting that value verbatim.
-const PRESETS_G = [DEFAULT_FULL_SCALE_G, 1.0, 2.0, 3.0];
+// "sensitivity" (not "frequency") in these labels — this setting is a
+// full-scale amplitude (g-force) threshold, not a Hz value.
+const PRESETS_G = [
+  { g: DEFAULT_FULL_SCALE_G, label: 'Micro-sensitivity' },
+  { g: 1.0, label: 'Low-sensitivity' },
+  { g: 2.0, label: 'Mid-sensitivity' },
+  { g: 3.0, label: 'High-sensitivity' },
+];
 
 const VOICE_OPTIONS = [
   { key: 'cello', label: 'Cello' },
@@ -40,28 +50,44 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={[styles.h1, { color: c.tx1 }]}>Settings</Text>
 
-        <Text style={[styles.sectionLabel, { color: c.tx3 }]}>SENSITIVITY</Text>
+        <Text style={[styles.sectionLabel, { color: c.tx3 }]}>CALIBRATION</Text>
         <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
+            Select pre-determined full-scale range values, or use Tremor Measurement Calibration to measure your
+            own.
+          </Text>
+
           <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Full-scale range</Text>
           <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
             Motion (in g) that reads as intensity 100. Lower = more sensitive.
           </Text>
 
-          <View style={styles.pillRow}>
-            {PRESETS_G.map((g) => {
-              const selected = currentValue === g;
+          <View style={styles.presetGrid}>
+            {PRESETS_G.map((p) => {
+              const selected = currentValue === p.g;
               return (
                 <Pressable
-                  key={g}
-                  onPress={() => actions.updateSettings({ fullScaleG: g })}
+                  key={p.g}
+                  onPress={() => actions.updateSettings({ fullScaleG: p.g })}
                   style={[
-                    styles.pill,
+                    styles.presetCell,
                     {
                       borderColor: selected ? c.info : c.bd3,
                       backgroundColor: selected ? c.bgInfo : c.bg1,
                     },
                   ]}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: selected ? c.info : c.tx1 }}>{g}g</Text>
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: '700',
+                      letterSpacing: 0.4,
+                      color: selected ? c.info : c.tx3,
+                      textAlign: 'center',
+                      marginBottom: 4,
+                    }}>
+                    {p.label.toUpperCase()}
+                  </Text>
+                  <Text style={{ fontSize: 18, fontWeight: '700', color: selected ? c.info : c.tx1 }}>{p.g}g</Text>
                 </Pressable>
               );
             })}
@@ -69,14 +95,6 @@ export default function SettingsScreen() {
 
           <View style={[styles.divider, { backgroundColor: c.bd3 }]} />
 
-          <Text style={{ fontSize: 12, color: c.tx3, lineHeight: 18 }}>
-            Scores recorded at different sensitivities are not directly comparable. Each session
-            stores the value it was recorded at.
-          </Text>
-        </View>
-
-        <Text style={[styles.sectionLabel, { color: c.tx3, marginTop: 20 }]}>CALIBRATION</Text>
-        <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
           <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Tremor Measurement</Text>
           <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
             Measures your own "level 100" and tremor frequency range directly, by having you produce your biggest
@@ -148,6 +166,15 @@ const styles = StyleSheet.create({
   card: { borderRadius: radii.lg, borderWidth: 1, padding: 16 },
   pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pill: { borderWidth: 1.5, borderRadius: radii.lg, paddingHorizontal: 16, paddingVertical: 10 },
+  presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  presetCell: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    borderWidth: 1.5,
+    borderRadius: radii.lg,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
   divider: { height: 1, marginVertical: 14 },
   calibRow: {
     flexDirection: 'row',

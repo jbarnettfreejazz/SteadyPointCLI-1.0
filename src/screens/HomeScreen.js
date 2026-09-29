@@ -44,6 +44,18 @@ const CONTINUOUS_TEMPLATE = {
 
 const DAY_MS = 86400000;
 
+// How long since the last completed Calibration Mode run before Home
+// nudges the user to recalibrate. Not a hard requirement — just a
+// reminder, since a tremor's frequency/amplitude can drift over time
+// (particularly relevant for essential tremor, whose frequency is known
+// to shift somewhat with age/disease duration) and a stale calibration
+// makes the tremor-band-based intensity/score filtering (see dsp.js's
+// bandLimitedRms()) less accurate. Only shown when lastCalibratedAt is
+// actually set — a user who's never run Calibration Mode (e.g. an
+// existing user grandfathered straight to hasCalibrated: true, see
+// persistence.js) isn't nagged into starting it.
+const RECALIBRATION_REMINDER_DAYS = 90;
+
 // Ported from renderHome()'s ring/sparkline/streak derivation — demo-mode
 // stub values plus the real-mode calculation from allSessions.
 function useHomeStats(state) {
@@ -116,6 +128,13 @@ export default function HomeScreen() {
   const { state, actions } = useStore();
   const { connect, disconnect } = useBLE();
   const stats = useHomeStats(state);
+
+  const needsRecalibration = useMemo(() => {
+    const last = state.settings.lastCalibratedAt;
+    if (!last) return false; // never calibrated — handled by Settings' "Open Calibration" button, not a nudge
+    const days = (Date.now() - new Date(last).getTime()) / DAY_MS;
+    return days >= RECALIBRATION_REMINDER_DAYS;
+  }, [state.settings.lastCalibratedAt]);
 
   // Mirrors quickStart(tpl) — launches the session immediately rather than
   // opening Setup for review, for both the built-in templates and any
@@ -192,6 +211,21 @@ export default function HomeScreen() {
           </View>
           {!!state.bleError && <Text style={{ color: c.danger, fontSize: 12, marginTop: 8 }}>{state.bleError}</Text>}
         </View>
+
+        {needsRecalibration && (
+          <View style={[styles.card, { backgroundColor: c.bgWarning, borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx1, fontWeight: '600', marginBottom: 4 }}>Time to recalibrate?</Text>
+            <Text style={{ color: c.tx2, fontSize: 12, lineHeight: 18, marginBottom: 10 }}>
+              It's been a while since your last calibration. Tremor can change over time — recalibrating keeps your
+              full-scale amplitude and frequency band accurate.
+            </Text>
+            <Pressable
+              onPress={() => navigation.navigate('calibration', { fromWelcome: false })}
+              style={[styles.smallButton, { borderColor: c.warning, alignSelf: 'flex-start' }]}>
+              <Text style={{ color: c.warning, fontWeight: '600', fontSize: 13 }}>Recalibrate</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* Today's baseline: score ring + 7-day bar sparkline */}
         <View style={[styles.baselineCard, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>

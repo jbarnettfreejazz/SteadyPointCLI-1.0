@@ -386,6 +386,118 @@ colors. `react-native-svg` was already a project dependency (used by
 an older session with no saved `intensityTrace` shows the same
 "not enough data" fallback the PWA original has for a too-short trace.
 
+## Settings — merged Sensitivity into Calibration
+Requested consolidation: the old standalone "SENSITIVITY" section (the
+manual full-scale-g preset picker) and the "CALIBRATION" section (the
+Tremor Measurement wizard) both set the exact same underlying
+`fullScaleG` setting — one manually, one automatically/more accurately
+— so they're now one merged card under a single "CALIBRATION" header,
+preset picker on top, a divider, then the existing Tremor Measurement
+block. This also makes the Tremor Measurement card's existing copy
+("more accurate than picking a preset above") literally true again,
+which it wasn't while the two lived in separate sections.
+
+The four presets moved from single-line pills ("0.35g", "1g", ...) to a
+2x2 grid of larger two-line buttons — a small letter-spaced label on
+top, the g-value below, both inside the same button. Relabeled per
+request: Micro/Low/Mid/High — using "-sensitivity" rather than the
+originally-requested "-frequency" wording, since this setting is a
+full-scale amplitude (g-force) threshold, not a Hz value; flagged this
+during design discussion and the user chose "-sensitivity" to keep the
+labels accurate to what they actually control.
+
+## Tremor-band filtering — distinguishing voluntary motion from tremor
+Raised question: an accelerometer on the wrist can't tell "lifting a
+glass to drink" from "tremor" — both are real, above-noise-floor
+motion, so both were counted equally toward live intensity, the
+SteadyPoint Score, and the Dominant Freq stat. Discussed several
+approaches (frequency-band filtering, motion-shape/kinematic
+discrimination, adding the onboard gyroscope, manual activity tagging,
+a learned classifier); band-filtering was the one selected to build
+now, since Calibration Mode already measures a per-user tremor
+frequency band (`tremorBandMinHz`/`tremorBandMaxHz`) but never actually
+applied it anywhere — it was only stored and displayed.
+
+**`bandLimitedRms()`** (new, in `dsp.js`) computes an RMS-equivalent
+amplitude using only the FFT spectral content that falls inside
+`[minHz, maxHz]`, instead of raw broadband time-domain RMS. A
+deliberate reach-and-lift is a large, low-frequency directed motion
+(well under a typical tremor band), so its energy is mostly outside the
+band and gets attenuated; genuine tremor oscillation stays in-band and
+passes through close to unchanged. Verified via synthetic signals: a
+pure in-band 6Hz "tremor" signal passed through at 99.9% of its raw
+RMS, a pure out-of-band 0.5Hz "reach" signal was reduced to 1.8%, and —
+importantly — a combined signal (reach + tremor superimposed, modeling
+essential tremor's kinetic component, which characteristically
+*worsens* during a reach rather than damping the way Parkinsonian rest
+tremor does) produced a band-limited RMS almost identical to the
+pure-tremor case, confirming real tremor riding on top of a voluntary
+motion is preserved rather than thrown out along with the gesture.
+
+**(a) Soft-edged taper, not a hard cutoff.** Essential tremor's
+frequency range (~4-12Hz) is wider and more individually variable than
+Parkinsonian tremor's narrower ~4-6Hz band, and can drift somewhat with
+age/disease duration between calibrations. A hard binary cutoff sitting
+exactly on a calibrated edge risked zeroing out real tremor content
+that drifted just slightly outside it. `bandLimitedRms()` instead
+applies a raised-cosine (Hann-style) taper of `taperHz` (default 1.5Hz)
+on each side of the band — full weight inside, a smooth ramp down to
+zero weight `taperHz` past each edge. Verified synthetically: a signal
+1Hz past the calibrated edge (inside the 1.5Hz taper) passed through at
+~51%, a smooth partial value rather than a cliff.
+
+**(b) Recalibration nudge.** Added `lastCalibratedAt` (ISO timestamp,
+`initialState.js`/`persistence.js`) set whenever Calibration Mode
+completes (`CalibrationResultsScreen.js`). Home now shows a dismissible
+(by recalibrating) banner — "Time to recalibrate?" — once more than
+`RECALIBRATION_REMINDER_DAYS` (90) have passed since the last
+calibration, since a stale calibration makes this band-filtering less
+accurate as a user's tremor changes over time. Deliberately only shown
+when `lastCalibratedAt` is actually set — a user who's never run
+Calibration Mode (e.g. an existing user grandfathered straight to
+`hasCalibrated: true`) isn't nagged into starting it for the first
+time; that's still an opt-in via Settings' existing "Open Calibration"
+button.
+
+Also fixed as a prerequisite: `CalibrationResultsScreen.js`'s "Save to
+Settings" previously only dispatched `updateSettings()` without an
+explicit `persistSave()` call, relying on the next session ending to
+opportunistically carry the change to disk. Since `lastCalibratedAt`'s
+entire purpose is to survive an app restart, this now calls
+`persistSave()` directly after dispatching, same pattern already used
+by `savePinnedSession()`/`SummaryScreen.js` elsewhere. (The other
+Settings pickers — `fullScaleG`, `sonificationVoice` — still have this
+same latent gap; not fixed here since it wasn't blocking this feature,
+but worth knowing about.)
+
+Wired into the live pipeline (`liveSession.js`'s `updateLiveMetrics()`,
+called every 300ms during a session): the tremor band actually in
+effect is fixed for the whole session at start time (`setTremorBand()`
+in `sessionLogic.js`'s `startSession()`, mirroring the existing
+`fullScaleG` pattern), and now persisted with each session record
+(`tremorBandMinHz`/`tremorBandMaxHz`) for the same reason `fullScaleG`
+already is — so a session stays self-describing even if the user's
+calibrated band changes before their next one.
+
+Known caveat, documented directly in `dsp.js`: Calibration Mode's
+`FULL_SCALE_G` is still measured from broadband (non-band-limited) RMS
+during the "find your peak" step — the ~300ms window used there is too
+short for meaningful frequency resolution at tremor-band frequencies.
+So a live band-limited reading during a similarly vigorous session will
+generally read at or slightly below what the same motion scored
+before this change, not exactly 100 even at calibration-level effort,
+since some of that effort's energy sits outside the tremor band. For
+genuine tremor-like motion (which is mostly in-band by nature) this
+should be a small effect in practice — worth watching for during
+real-device testing, not something addressed in this pass.
+
+The pre-existing "Intensity shift" (start-level/end-level/reduction)
+calculation in `sessionLogic.js`'s `endSession()` — used only for the
+Session Detail insight-box text now, since its own stat cards were
+removed in an earlier redesign — was deliberately left on raw broadband
+RMS, unchanged, to keep this change scoped to the live intensity/score
+pipeline.
+
 ## Connectivity guard — disconnection mid-session
 Reported bug: powering off the M5Stick during a session left the
 session running indefinitely with a frozen intensity reading — nothing

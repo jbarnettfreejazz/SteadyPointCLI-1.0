@@ -326,6 +326,90 @@ export function detectSustainedFrequencyBand(sessionBuffer, opts = {}) {
   return bestMin == null ? null : { minHz: bestMin, maxHz: bestMax };
 }
 
+// Raised-cosine (Hann-style) taper weight for bandLimitedRms() below.
+// Returns 1.0 for a frequency inside [minHz, maxHz], 0.0 once more than
+// taperHz away from the nearest edge, and a smooth cosine ramp in between
+// — rather than a hard 1/0 cutoff exactly at minHz/maxHz. See
+// bandLimitedRms() for why a soft edge matters here.
+function taperWeight(f, minHz, maxHz, taperHz) {
+  if (taperHz <= 0) return f >= minHz && f <= maxHz ? 1 : 0;
+  if (f < minHz - taperHz || f > maxHz + taperHz) return 0;
+  if (f >= minHz && f <= maxHz) return 1;
+  if (f < minHz) {
+    const t = (f - (minHz - taperHz)) / taperHz; // 0 at the outer edge -> 1 at minHz
+    return 0.5 - 0.5 * Math.cos(Math.PI * t);
+  }
+  const t = (f - maxHz) / taperHz; // 0 at maxHz -> 1 at the outer edge
+  return 0.5 + 0.5 * Math.cos(Math.PI * t);
+}
+
+// RMS-equivalent amplitude of ONLY the frequency content inside a user's
+// calibrated tremor band [minHz, maxHz] — built so a deliberate voluntary
+// movement (e.g. reaching for a glass) doesn't fully register as tremor
+// intensity just because it's above the noise floor. A reach's own
+// directed motion is low-frequency (well under a typical tremor band) and
+// gets attenuated by this function, while any real oscillatory tremor
+// riding on top of it (common in essential tremor's kinetic/action
+// component, which often *worsens* during a reach rather than damping
+// like Parkinsonian rest tremor does) stays in-band and is preserved.
+//
+// Uses a soft raised-cosine taper (see taperWeight() above) at the band
+// edges rather than a hard cutoff, specifically because essential
+// tremor's frequency range (~4-12Hz) is both wider and more
+// individually variable than Parkinsonian tremor's narrower ~4-6Hz band,
+// and can drift somewhat with age/disease duration between
+// calibrations — a hard binary cutoff sitting exactly on a calibrated
+// edge risks zeroing out real tremor content that's only slightly
+// outside it. taperHz controls how wide that soft margin is on each
+// side; defaults to 1.5Hz.
+//
+// Returned on the same scale as rmsOf() (same units, same "gravity-free
+// AC-RMS across all three axes" definition) via Parseval's theorem, so it
+// can be passed straight into the existing rmsToLevel()/fullScaleG
+// pipeline unchanged. Known caveat: Calibration Mode's FULL_SCALE_G is
+// still measured from broadband (non-band-limited) RMS — see
+// CalibrationScreen.js — so a live band-limited reading during a
+// similarly vigorous session will generally read at or slightly below
+// what the same motion would have scored before this change, not
+// exactly 100 even at calibration-level effort, since some of that
+// effort's energy sits outside the tremor band. In practice this should
+// be small for genuine tremor-like motion, which is mostly in-band by
+// nature.
+export function bandLimitedRms(xs, ys, zs, sr, minHz, maxHz, taperHz = 1.5) {
+  const n = xs.length;
+  if (!n || !ys.length || !zs.length) return 0;
+
+  let bandSumSq = 0;
+  for (const axis of [xs, ys, zs]) {
+    if (axis.length < 8) continue;
+    let padN = 1;
+    while (padN < axis.length) padN <<= 1;
+    const m = mean(axis);
+    const re = axis.map((v) => v - m).concat(new Array(Math.max(0, padN - axis.length)).fill(0));
+    const im = new Array(padN).fill(0);
+    fft(re, im);
+
+    let axisPower = 0;
+    for (let i = 1; i < padN / 2; i++) {
+      const f = (i * sr) / padN;
+      const w = taperWeight(f, minHz, maxHz, taperHz);
+      if (w <= 0) continue;
+      axisPower += w * (re[i] * re[i] + im[i] * im[i]);
+    }
+    // Parseval: sum_i(x_i - mean)^2 (over the original, non-padded samples)
+    // == (2/padN) * sum over the positive-frequency half of |X[k]|^2 (the
+    // factor of 2 accounts for the mirrored negative-frequency half of a
+    // real-valued signal's spectrum; DC/Nyquist are negligible here since
+    // the signal is mean-centered and taperWeight() zeroes anything near
+    // 0Hz or the Nyquist edge anyway).
+    bandSumSq += (2 * axisPower) / padN;
+  }
+
+  // Matches rmsOf()'s definition: sqrt of the mean (per original sample)
+  // of the summed squared deviations across all three axes.
+  return Math.sqrt(bandSumSq / n);
+}
+
 // Linearly maps value from [srcMin,srcMax] into [dstMin,dstMax], clamping
 // out-of-range input first. Mirrors the reference's map_to_audible().
 export function mapRange(value, srcMin, srcMax, dstMin, dstMax) {

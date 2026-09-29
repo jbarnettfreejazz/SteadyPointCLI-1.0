@@ -208,8 +208,12 @@ export function startSession({ state, actions, navigation, overrides }) {
   actions.setSetupMode('start');
 
   // Fixed for the whole session, even if the setting changes before the
-  // *next* one — see liveSession.js's setFullScaleG() for why.
+  // *next* one — see liveSession.js's setFullScaleG() for why. Same
+  // fixed-for-the-session treatment for the tremor frequency band, which
+  // now gates live intensity/score via bandLimitedRms() (see dsp.js and
+  // liveSession.js's updateLiveMetrics()).
   live.setFullScaleG(effective.settings?.fullScaleG);
+  live.setTremorBand(effective.settings?.tremorBandMinHz, effective.settings?.tremorBandMaxHz);
   setActiveVoice(effective.settings?.sonificationVoice);
 
   live.beginSessionBuffers();
@@ -254,6 +258,11 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   // not the default, so these numbers are consistent with the live
   // display and the levelTrace used for the score below.
   const sessionFullScaleG = live.getFullScaleG();
+  // The tremor band actually in effect for this session (see startSession()
+  // above) — persisted alongside fullScaleG for the same reason: so a
+  // session's record stays self-describing even if the user's calibrated
+  // band changes before their next session.
+  const { tremorBandMinHz: sessionTremorBandMinHz, tremorBandMaxHz: sessionTremorBandMaxHz } = live.getTremorBand();
   let startLevel = 0,
     endLevel = 0,
     reductionPct = 0;
@@ -365,6 +374,8 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     pctHigh: results.pctHigh,
     reduction: results.reduction,
     fullScaleG: results.fullScaleG,
+    tremorBandMinHz: sessionTremorBandMinHz,
+    tremorBandMaxHz: sessionTremorBandMaxHz,
     duration: results.duration,
     isContinuous: !state.config.duration, // true if this session had no fixed duration — see Continuous Session
     freq: results.peakFreq,

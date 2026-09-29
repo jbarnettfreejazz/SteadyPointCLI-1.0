@@ -1,4 +1,11 @@
-import { rmsOf, std, combinedDominantFreq, rmsToLevel, DEFAULT_FULL_SCALE_G } from '../utils/dsp';
+import {
+  rmsOf,
+  std,
+  combinedDominantFreq,
+  rmsToLevel,
+  bandLimitedRms,
+  DEFAULT_FULL_SCALE_G,
+} from '../utils/dsp';
 
 // ══════════════════════════════════════════════════════
 // LIVE SESSION STORE
@@ -101,6 +108,22 @@ export function setFullScaleG(value) {
 
 export function getFullScaleG() {
   return fullScaleG;
+}
+
+// The user's calibrated tremor frequency band (see Calibration_Mode_Design.pdf
+// and dsp.js's bandLimitedRms()) — set once at the start of each session,
+// same fixed-for-the-session pattern as fullScaleG above, and read back at
+// session end so the exact band actually used gets persisted with it.
+let tremorBandMinHz = 3;
+let tremorBandMaxHz = 14;
+
+export function setTremorBand(minHz, maxHz) {
+  tremorBandMinHz = typeof minHz === 'number' && minHz >= 0 ? minHz : 3;
+  tremorBandMaxHz = typeof maxHz === 'number' && maxHz > tremorBandMinHz ? maxHz : 14;
+}
+
+export function getTremorBand() {
+  return { tremorBandMinHz, tremorBandMaxHz };
 }
 
 // Registered by the Recording screen when audio feedback is enabled —
@@ -237,7 +260,19 @@ const METRICS_WARMUP_SAMPLES = 50;
 function updateLiveMetrics() {
   if (state.recentX.length < METRICS_WARMUP_SAMPLES) return;
 
-  const rms = rmsOf(state.recentX, state.recentY, state.recentZ);
+  // Sample-rate estimate, needed up front now since bandLimitedRms() is an
+  // FFT-based calculation (was previously only computed further down, for
+  // the Dominant Freq stat).
+  const sr = state.packetTimes.length > 1 ? state.packetTimes.length / 2 : 50;
+
+  // Intensity/score are now computed from ONLY the frequency content
+  // inside the user's calibrated tremor band, not raw broadband RMS — see
+  // bandLimitedRms() in dsp.js for the full rationale (distinguishing
+  // involuntary tremor from voluntary motions like reaching for a glass,
+  // with a soft taper at the band edges to accommodate essential tremor's
+  // wider, more individually-variable frequency range compared to
+  // Parkinsonian tremor).
+  const rms = bandLimitedRms(state.recentX, state.recentY, state.recentZ, sr, tremorBandMinHz, tremorBandMaxHz);
   const tremorLevel = rmsToLevel(rms, fullScaleG);
   state.tremorLevel = tremorLevel;
   state.sparkBuf = [...state.sparkBuf.slice(-(SPARK_LEN - 1)), tremorLevel];
@@ -266,7 +301,7 @@ function updateLiveMetrics() {
   state.liveYpct = Math.min(100, Math.round((sdY / sdMax) * 100));
   state.liveZpct = Math.min(100, Math.round((sdZ / sdMax) * 25)); // kept visually low, matches original
 
-  const sr = state.packetTimes.length > 1 ? state.packetTimes.length / 2 : 50;
+  // sr computed once, up front — see the top of this function.
   // MIN_INTENSITY_FOR_DOMINANT_FREQ mirrors the same threshold validated
   // for sonification's frequency detection (see audio.js) — confirmed via
   // real testing that without this gate, this calculation reports
