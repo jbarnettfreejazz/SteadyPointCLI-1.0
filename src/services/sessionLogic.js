@@ -213,7 +213,16 @@ export function startSession({ state, actions, navigation, overrides }) {
   // now gates live intensity/score via bandLimitedRms() (see dsp.js and
   // liveSession.js's updateLiveMetrics()).
   live.setFullScaleG(effective.settings?.fullScaleG);
-  live.setTremorBand(effective.settings?.tremorBandMinHz, effective.settings?.tremorBandMaxHz);
+  // Band-filtering only activates once the user has actually run
+  // Calibration Mode at least once (lastCalibratedAt is only ever set by
+  // CalibrationResultsScreen.js on real completion — unlike hasCalibrated,
+  // it's never backfilled true for grandfathered/preset-only users) — see
+  // setTremorBand() in liveSession.js for why this matters.
+  live.setTremorBand(
+    effective.settings?.tremorBandMinHz,
+    effective.settings?.tremorBandMaxHz,
+    !!effective.settings?.lastCalibratedAt,
+  );
   setActiveVoice(effective.settings?.sonificationVoice);
 
   live.beginSessionBuffers();
@@ -262,7 +271,11 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   // above) — persisted alongside fullScaleG for the same reason: so a
   // session's record stays self-describing even if the user's calibrated
   // band changes before their next session.
-  const { tremorBandMinHz: sessionTremorBandMinHz, tremorBandMaxHz: sessionTremorBandMaxHz } = live.getTremorBand();
+  const {
+    tremorBandMinHz: sessionTremorBandMinHz,
+    tremorBandMaxHz: sessionTremorBandMaxHz,
+    tremorBandActive: sessionTremorBandActive,
+  } = live.getTremorBand();
   let startLevel = 0,
     endLevel = 0,
     reductionPct = 0;
@@ -376,6 +389,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     fullScaleG: results.fullScaleG,
     tremorBandMinHz: sessionTremorBandMinHz,
     tremorBandMaxHz: sessionTremorBandMaxHz,
+    tremorBandFiltered: sessionTremorBandActive, // whether the band above was actually applied to this session's scoring, or just carried along informationally
     duration: results.duration,
     isContinuous: !state.config.duration, // true if this session had no fixed duration — see Continuous Session
     freq: results.peakFreq,

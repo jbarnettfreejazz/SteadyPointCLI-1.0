@@ -117,13 +117,28 @@ export function getFullScaleG() {
 let tremorBandMinHz = 3;
 let tremorBandMaxHz = 14;
 
-export function setTremorBand(minHz, maxHz) {
+// Whether band-filtering should actually be APPLIED this session — true
+// only once the user has genuinely run Calibration Mode at least once
+// (see sessionLogic.js's startSession(), which derives this from
+// settings.lastCalibratedAt). A user who instead picks a manual full-scale
+// preset (Settings > Calibration > Full-scale range) never touches
+// tremorBandMinHz/tremorBandMaxHz at all, so without this flag those two
+// values would silently sit at the factory default (3-14Hz) and still get
+// applied as an invisible filter the user never saw or agreed to — this
+// flag keeps band-filtering opt-in to people who've actually measured
+// their own band, rather than something that happens to everyone by
+// default. When false, updateLiveMetrics() below falls back to plain
+// broadband rmsOf(), i.e. the original pre-band-filter behavior.
+let tremorBandActive = false;
+
+export function setTremorBand(minHz, maxHz, active = false) {
   tremorBandMinHz = typeof minHz === 'number' && minHz >= 0 ? minHz : 3;
   tremorBandMaxHz = typeof maxHz === 'number' && maxHz > tremorBandMinHz ? maxHz : 14;
+  tremorBandActive = !!active;
 }
 
 export function getTremorBand() {
-  return { tremorBandMinHz, tremorBandMaxHz };
+  return { tremorBandMinHz, tremorBandMaxHz, tremorBandActive };
 }
 
 // Registered by the Recording screen when audio feedback is enabled —
@@ -265,14 +280,21 @@ function updateLiveMetrics() {
   // the Dominant Freq stat).
   const sr = state.packetTimes.length > 1 ? state.packetTimes.length / 2 : 50;
 
-  // Intensity/score are now computed from ONLY the frequency content
-  // inside the user's calibrated tremor band, not raw broadband RMS — see
+  // Intensity/score are computed from ONLY the frequency content inside
+  // the user's calibrated tremor band, not raw broadband RMS — see
   // bandLimitedRms() in dsp.js for the full rationale (distinguishing
   // involuntary tremor from voluntary motions like reaching for a glass,
   // with a soft taper at the band edges to accommodate essential tremor's
   // wider, more individually-variable frequency range compared to
-  // Parkinsonian tremor).
-  const rms = bandLimitedRms(state.recentX, state.recentY, state.recentZ, sr, tremorBandMinHz, tremorBandMaxHz);
+  // Parkinsonian tremor) — but ONLY once tremorBandActive is true, i.e.
+  // the user has actually run Calibration Mode at least once (see
+  // setTremorBand() above for why). Someone who's only ever picked a
+  // manual full-scale preset gets the original, unfiltered broadband
+  // rmsOf() instead, so a factory-default band they never saw or measured
+  // never silently narrows their reading.
+  const rms = tremorBandActive
+    ? bandLimitedRms(state.recentX, state.recentY, state.recentZ, sr, tremorBandMinHz, tremorBandMaxHz)
+    : rmsOf(state.recentX, state.recentY, state.recentZ);
   const tremorLevel = rmsToLevel(rms, fullScaleG);
   state.tremorLevel = tremorLevel;
   state.sparkBuf = [...state.sparkBuf.slice(-(SPARK_LEN - 1)), tremorLevel];
