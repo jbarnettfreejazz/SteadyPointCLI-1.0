@@ -16,12 +16,18 @@ import { shareCalibrationLog } from '../services/calibrationLogger';
 // on-device calibration earlier this project) in place of the PWA's 0.3g,
 // at the user's explicit request, rather than adopting that value verbatim.
 // "sensitivity" (not "frequency") in these labels — this setting is a
-// full-scale amplitude (g-force) threshold, not a Hz value.
+// full-scale amplitude (g-force) threshold, not a Hz value. Labels run
+// Max -> Min as g increases, matching the "Lower = more sensitive" copy
+// above the grid (a smaller full-scale-g threshold takes less motion to
+// read as intensity 100, i.e. is MORE sensitive) — a lower g value here
+// is NOT the same direction as "Low-sensitivity". Originally shipped
+// with the direction reversed (High-sensitivity on the least-sensitive
+// 3g option); caught and corrected before wide use.
 const PRESETS_G = [
-  { g: DEFAULT_FULL_SCALE_G, label: 'Micro-sensitivity' },
-  { g: 1.0, label: 'Low-sensitivity' },
-  { g: 2.0, label: 'Mid-sensitivity' },
-  { g: 3.0, label: 'High-sensitivity' },
+  { g: DEFAULT_FULL_SCALE_G, label: 'Max-sensitivity' },
+  { g: 1.0, label: 'High-sensitivity' },
+  { g: 2.0, label: 'Low-sensitivity' },
+  { g: 3.0, label: 'Min-sensitivity' },
 ];
 
 const VOICE_OPTIONS = [
