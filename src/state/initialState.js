@@ -54,7 +54,9 @@ export function buildInitialState(appMode = 'real') {
       defaultDuration: 10,
       defaultType: 'guided',
       fullScaleG: 0.35, // "Full-scale range motion (in g) that reads as intensity 100" — see dsp.js's rmsToLevel()
-      sonificationVoice: 'cello', // which single instrument carries the combined-axis sonification signal
+      sonificationVoice: 'cello', // which single instrument (or 'custom') carries the combined-axis sonification signal
+      customTonalRangeMinHz: 200, // Settings > Sonification > "Custom" tonal range — only used when sonificationVoice === 'custom'
+      customTonalRangeMaxHz: 700,
       tremorBandMinHz: 3, // Calibration Mode — see Calibration_Mode_Design.pdf
       tremorBandMaxHz: 14,
       noiseFloorG: 0.006, // not measured by Calibration Mode itself; manually editable only (Phase 2)

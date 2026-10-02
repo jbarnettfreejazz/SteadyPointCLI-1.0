@@ -3,7 +3,7 @@ import { rmsOf, rmsToLevel } from '../utils/dsp';
 import * as live from '../state/liveSession';
 import { sendCommand } from './ble';
 import { persistSave } from './persistence';
-import { silenceAudio, setActiveVoice } from './audio';
+import { silenceAudio, setActiveVoice, setCustomTonalRange } from './audio';
 import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
 import { downsampleTrace } from '../utils/sessionStats';
@@ -224,6 +224,10 @@ export function startSession({ state, actions, navigation, overrides }) {
     !!effective.settings?.lastCalibratedAt,
   );
   setActiveVoice(effective.settings?.sonificationVoice);
+  // Only meaningful when the "custom" tonal range voice is selected, but
+  // cheap/harmless to always set — mirrors setFullScaleG()/setTremorBand()'s
+  // "fixed for the whole session" treatment.
+  setCustomTonalRange(effective.settings?.customTonalRangeMinHz, effective.settings?.customTonalRangeMaxHz);
 
   live.beginSessionBuffers();
   sendCommand('START');

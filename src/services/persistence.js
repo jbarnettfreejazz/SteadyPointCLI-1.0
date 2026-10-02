@@ -123,6 +123,8 @@ export async function persistLoad() {
           tremorBandMaxHz: 14,
           noiseFloorG: 0.006,
           lastCalibratedAt: null,
+          customTonalRangeMinHz: 200,
+          customTonalRangeMaxHz: 700,
           ...loadedSettings,
           hasCalibrated: loadedSettings.hasCalibrated ?? true,
         }

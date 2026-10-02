@@ -115,10 +115,20 @@ const TRIM_DB = {
 // Each instrument's own natural register — both the target range its
 // pitch is mapped into, and its output volume ceiling. Reused unchanged
 // from the old per-axis 3-voice engine.
+//
+// "custom" is NOT a recorded sample at all — per tester feedback asking
+// for a cleaner/more precise tone than a pitch-shifted instrument sample,
+// it's a pure sine-wave oscillator (see SineVoice below) at the user's own
+// chosen pan/gain, mapping the combined dominant frequency into a
+// user-defined minFreq/maxFreq range. minFreq/maxFreq here are just the
+// startup defaults (200-700Hz, per the product spec); setCustomTonalRange()
+// below overwrites them from the user's persisted Settings choice at
+// session start.
 const VOICE_CONFIG = {
   cello: { pan: -0.45, minFreq: 65, maxFreq: 130, maxGain: 0.4 },
   viola: { pan: 0, minFreq: 196, maxFreq: 330, maxGain: 0.25 },
   violin: { pan: 0.45, minFreq: 392, maxFreq: 784, maxGain: 0.4 },
+  custom: { pan: 0, minFreq: 200, maxFreq: 700, maxGain: 0.25 },
 };
 
 // Expected tremor/movement frequency range that combinedDominantFreq()
@@ -309,11 +319,89 @@ class SampleVoice {
   }
 }
 
+// Backs the "custom" voice — a pure sine-wave tone at the mapped tremor
+// frequency, with the same pan/filter/gain staging as SampleVoice above,
+// but no sample to load and no pitch-shifting: the oscillator's own
+// `frequency` AudioParam is just set directly to the mapped Hz value.
+// Per Web Audio API spec, an OscillatorNode can only be start()ed once —
+// so unlike SampleVoice (whose sample loading is async and gates `ready`),
+// this is constructed, started, and immediately ready, all synchronously.
+class SineVoice {
+  constructor(ctx, { pan, maxFreq }) {
+    this.ctx = ctx;
+
+    this.pan = ctx.createStereoPanner();
+    this.pan.pan.value = pan;
+
+    this.output = ctx.createGain();
+    this.output.gain.value = 0;
+
+    // Same expressive "brightness" lowpass as SampleVoice — on a pure sine
+    // this mostly has no effect (a sine has no harmonics to filter out),
+    // but is kept for consistency/headroom if the waveform type changes
+    // later, and costs nothing to leave in.
+    this.filter = ctx.createBiquadFilter();
+    this.filter.type = 'lowpass';
+    this.filter.frequency.value = 2400;
+    this.filter.Q.value = 1.0;
+    this.filter.connect(this.output);
+    this.output.connect(this.pan);
+
+    this.osc = ctx.createOscillator();
+    this.osc.type = 'sine';
+    // Starting frequency doesn't matter — overwritten by the first real
+    // setFrequency() call once a dominant frequency is detected. Seeded at
+    // maxFreq's midpoint-ish rather than the Web Audio default (440Hz) just
+    // so a stray early update isn't a jarring out-of-range jump.
+    this.osc.frequency.value = maxFreq;
+    this.osc.connect(this.filter);
+    this.osc.start(ctx.currentTime);
+  }
+
+  // Always ready immediately — no async sample load to wait on.
+  get ready() {
+    return true;
+  }
+
+  connect(node) {
+    this.pan.connect(node);
+  }
+
+  setFrequency(freq) {
+    this.osc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.05);
+  }
+
+  setGain(level) {
+    this.output.gain.setTargetAtTime(level, this.ctx.currentTime, 0.08);
+  }
+
+  setBrightness(value) {
+    const v = Math.pow(Math.max(0, Math.min(1, value)), 0.7);
+    const cutoff = 800 + v * 2800;
+    this.filter.frequency.setTargetAtTime(cutoff, this.ctx.currentTime, 0.06);
+  }
+
+  // Mirrors SampleVoice.stopHard() — see its comment for why an explicit
+  // gain cutoff rather than a scheduled-value cancel.
+  stopHard(t) {
+    this.output.gain.setValueAtTime(0, t);
+  }
+
+  stopSource() {
+    try {
+      this.osc.stop();
+    } catch (e) {
+      // already stopped, or never started — fine to ignore
+    }
+  }
+}
+
 let audioCtx = null;
 let masterGain = null;
 let cello = null,
   viola = null,
-  violin = null;
+  violin = null,
+  custom = null;
 
 // Which single instrument is active for the current session — set once at
 // startSession() time from the user's Settings choice, held fixed for the
@@ -324,8 +412,23 @@ export function setActiveVoice(name) {
   activeVoiceName = VOICE_CONFIG[name] ? name : 'cello';
 }
 
+// Called once at startSession() time (see sessionLogic.js) with the user's
+// persisted Settings > Sonification > Tonal Range > Custom values, mirroring
+// setActiveVoice()/setFullScaleG()'s "fixed for the session" pattern. Falls
+// back to the existing custom range (or the 200-700Hz default above) on
+// invalid input rather than throwing, since this runs on every session start.
+export function setCustomTonalRange(minHz, maxHz) {
+  const lo = Number(minHz);
+  const hi = Number(maxHz);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo <= 0 || hi <= lo) return;
+  VOICE_CONFIG.custom.minFreq = lo;
+  VOICE_CONFIG.custom.maxFreq = hi;
+}
+
+// "custom" plays through its own SineVoice instance (see VOICE_CONFIG
+// comment above) rather than a recorded sample.
 function activeVoice() {
-  return { cello, viola, violin }[activeVoiceName];
+  return { cello, viola, violin, custom }[activeVoiceName];
 }
 
 let lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
@@ -382,14 +485,18 @@ export function initAudio() {
   cello = new SampleVoice(audioCtx, { pan: VOICE_CONFIG.cello.pan, referenceFreq: REFERENCE_FREQ.cello, trimDb: TRIM_DB.cello });
   viola = new SampleVoice(audioCtx, { pan: VOICE_CONFIG.viola.pan, referenceFreq: REFERENCE_FREQ.viola, trimDb: TRIM_DB.viola });
   violin = new SampleVoice(audioCtx, { pan: VOICE_CONFIG.violin.pan, referenceFreq: REFERENCE_FREQ.violin, trimDb: TRIM_DB.violin });
+  custom = new SineVoice(audioCtx, { pan: VOICE_CONFIG.custom.pan, maxFreq: VOICE_CONFIG.custom.maxFreq });
 
   cello.connect(masterGain);
   viola.connect(masterGain);
   violin.connect(masterGain);
+  custom.connect(masterGain);
 
   cello.loadPair(bundledAssetPath('cello'), bundledAssetPath('cello_loud')).catch((e) => console.warn('cello samples failed to load:', e.message));
   viola.loadPair(bundledAssetPath('viola'), bundledAssetPath('viola_loud')).catch((e) => console.warn('viola samples failed to load:', e.message));
   violin.loadPair(bundledAssetPath('violin'), bundledAssetPath('violin_loud')).catch((e) => console.warn('violin samples failed to load:', e.message));
+  // custom (SineVoice) needs no loadPair() — it's synchronously ready, see
+  // its class comment above.
 
   lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
   lastFreqComputeTime = 0;
@@ -474,6 +581,7 @@ export function silenceAudio() {
   cello?.stopHard(t);
   viola?.stopHard(t);
   violin?.stopHard(t);
+  custom?.stopHard(t);
   lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
   lastFreqComputeTime = 0;
   cachedMappedFreq = null;
@@ -491,11 +599,12 @@ export function destroyAudio() {
     cello?.stopSource();
     viola?.stopSource();
     violin?.stopSource();
+    custom?.stopSource();
     audioCtx.close?.();
   } catch (e) {
     // already stopped/closed — fine to ignore
   }
   audioCtx = null;
   masterGain = null;
-  cello = viola = violin = null;
+  cello = viola = violin = custom = null;
 }

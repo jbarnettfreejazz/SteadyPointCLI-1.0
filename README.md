@@ -406,6 +406,16 @@ full-scale amplitude (g-force) threshold, not a Hz value; flagged this
 during design discussion and the user chose "-sensitivity" to keep the
 labels accurate to what they actually control.
 
+**Follow-up fix — label direction was backwards.** The initial
+Micro/Low/Mid/High assignment (0.35g/1g/2g/3g respectively) had the
+direction inverted: the card's own description text says "Lower =
+more sensitive" (a smaller full-scale-g threshold takes less motion to
+read as intensity 100), but "High-sensitivity" was on 3g — the
+*least* sensitive option — and "Low-sensitivity" was on 1g, a fairly
+sensitive one. Corrected to a Max → Min gradient that actually runs in
+the right direction as g increases: `0.35g Max-sensitivity → 1g
+High-sensitivity → 2g Low-sensitivity → 3g Min-sensitivity`.
+
 ## Tremor-band filtering — distinguishing voluntary motion from tremor
 Raised question: an accelerometer on the wrist can't tell "lifting a
 glass to drink" from "tremor" — both are real, above-noise-floor
@@ -497,6 +507,38 @@ Session Detail insight-box text now, since its own stat cards were
 removed in an earlier redesign — was deliberately left on raw broadband
 RMS, unchanged, to keep this change scoped to the live intensity/score
 pipeline.
+
+### Band-filtering made opt-in — only for users who've actually calibrated
+Follow-up question raised after the merged Settings redesign below: once
+users can pick a manual full-scale preset instead of running Calibration
+Mode, does the tremor-band filter above still make sense for them? It
+didn't — `tremorBandMinHz`/`tremorBandMaxHz` are only ever *set* by
+`CalibrationResultsScreen.js` on wizard completion, so a preset-only
+user (or an existing user grandfathered to `hasCalibrated: true`
+without ever running the wizard — see `persistence.js`) would silently
+keep the factory-default 3-14Hz band applied to their live scoring,
+without ever having seen or agreed to it.
+
+Fixed by adding a third argument to `setTremorBand(minHz, maxHz,
+active)` in `liveSession.js` — `active` gates whether
+`updateLiveMetrics()` actually calls `bandLimitedRms()` at all;
+when false, it falls back to plain broadband `rmsOf()`, i.e. the
+original pre-band-filter behavior. `sessionLogic.js`'s `startSession()`
+derives `active` from `!!settings.lastCalibratedAt` — deliberately not
+`hasCalibrated`, since that field IS backfilled true for grandfathered
+users (to avoid re-triggering the mandatory first-launch gate), while
+`lastCalibratedAt` is only ever set by an actual completed calibration
+run. Net effect: band-filtering only ever applies to someone who has
+personally measured their own band at least once; picking a preset
+afterward still only changes `fullScaleG` and leaves their measured
+band (and the filtering) in place, which is correct — they earned that
+band once and it doesn't need re-earning every session.
+
+Also now persisted per session: `tremorBandFiltered` (boolean) —
+whether band-filtering was actually applied to that specific session's
+scoring, distinct from the `tremorBandMinHz`/`tremorBandMaxHz` values
+themselves (which are always carried along informationally even when
+not applied, same as before).
 
 ## Connectivity guard — disconnection mid-session
 Reported bug: powering off the M5Stick during a session left the
@@ -1003,6 +1045,67 @@ The existing "Dominant Freq" stat and the SteadyPoint Score's stored
 Y-axis-only `dominantFreq()`, a deliberate scope decision to avoid
 touching an unrelated, already-working feature while iterating on
 sonification specifically.
+
+## Custom tonal range — user-defined sonification register
+Based on user feedback: several users liked the three instrument choices
+but wanted a tonal range of their own rather than being limited to
+Cello/Viola/Violin's fixed registers. Added a fourth **Custom** option to
+Settings > Sonification, alongside the existing three.
+
+- **Settings > Sonification** is now headed "Tonal Range" instead of
+  "Instrument" (the section now covers more than instrument choice), with
+  updated description text. A fourth pill, **Custom**, sits next to Violin.
+- Selecting **Custom** expands a **Custom Tonal Range** sub-pane in place,
+  directly below the pill row — pressing Custom again while it's already
+  selected and expanded collapses the sub-pane (pressing a different
+  instrument also collapses it, and switches voices as normal). The
+  sub-pane holds:
+  - A **Lower** slider (with its live value, e.g. "Lower 200hz") and an
+    **Upper** slider ("Upper 700hz"), each spanning 50-1000Hz —
+    deliberately wider than any single existing instrument's register, so
+    Custom can cover one of them, straddle several, or sit entirely
+    outside all three
+  - Below the sliders, editable **Lower**/**Upper** numeric text fields,
+    synced to the sliders in real time in both directions — dragging a
+    slider updates its field, typing a valid number in a field moves its
+    slider
+  - **Validation**: Lower is always kept at least 10Hz below Upper (a
+    `CUSTOM_RANGE_MIN_GAP_HZ` floor) — dragging/typing one past the other
+    clamps it to that minimum gap rather than allowing an invalid or
+    zero-width range. Both are clamped to the 50-1000Hz slider bounds.
+    An invalid or empty text-field entry doesn't corrupt the stored
+    setting — the field simply snaps back to the last valid committed
+    value on blur.
+- **Persisted** as `customTonalRangeMinHz`/`customTonalRangeMaxHz` in
+  Settings (new backfill defaults in `persistence.js`: 200/700Hz, per the
+  product's stated default), independent of which voice is currently
+  selected — so switching to Cello and back to Custom doesn't lose a
+  previously-entered range. The sub-pane's expand/collapse state itself is
+  **not** persisted (purely transient UI state) — Custom always opens
+  collapsed, even if it was left expanded last session.
+- **Underlying sound**: originally shipped reusing the Viola sample's
+  playback voice (pitch-shifted into the user's custom range); **changed
+  to a pure sine-wave oscillator** per direct tester feedback asking for a
+  cleaner, more precise tone than a pitch-shifted instrument sample. A new
+  `SineVoice` class in `audio.js` (alongside the existing sample-based
+  `SampleVoice`) wraps a Web Audio `OscillatorNode` (`type: 'sine'`)
+  through the same pan/lowpass-filter/gain staging as the other voices —
+  `setFrequency()` just sets the oscillator's `frequency` AudioParam
+  directly to the mapped Hz value every update, with no sample loading, no
+  reference-pitch/semitone math, and no pitch-shifter needed. Per the Web
+  Audio spec an oscillator can only be `start()`ed once, so `SineVoice` is
+  constructed and started once in `initAudio()` and is synchronously ready
+  (no async `loadPair()` to wait on, unlike the sample-based voices).
+- **Session wiring**: `setCustomTonalRange(minHz, maxHz)` (`audio.js`) is
+  called once at `startSession()` time in `sessionLogic.js`, alongside the
+  existing `setActiveVoice()`/`setFullScaleG()`/`setTremorBand()` calls —
+  fixed for the whole session even if Settings changes mid-session,
+  matching that established pattern. It's called unconditionally (cheap,
+  harmless when a non-Custom voice is active).
+- **Dependency added**: `@react-native-community/slider` (pinned to
+  `4.5.7`, the latest release on the 4.x line — the 5.x line targets
+  newer RN/new-architecture setups, not a fit for this project's RN
+  0.75.4 bare/old-architecture setup).
 
 ## Configurable sensitivity calibration
 `FULL_SCALE_G` (the amount of motion that reads as intensity 100) is
