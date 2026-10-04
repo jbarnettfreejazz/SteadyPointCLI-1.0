@@ -1107,6 +1107,127 @@ Settings > Sonification, alongside the existing three.
   newer RN/new-architecture setups, not a fit for this project's RN
   0.75.4 bare/old-architecture setup).
 
+## Fix — buzzy/pulsing artifact on the Custom sine voice
+Testers reported Custom's sine tone sounding buzzy with a "hard, regular
+background techno pulsing quality" — notably different from a comparable
+pure-tone sonification in the team's Flutter app, which sounds clean and
+continuous. Investigated via an outside code review (shared as
+investigation notes) proposing two theories: (1) the FFT recomputing on
+every BLE packet without throttling, a heavy enough load to cause
+irregular audio-clock delays, similar to a previously-confirmed load
+ceiling with 6 simultaneous pitch-shifters; (2) the lowpass filter's
+cutoff being continuously modulated, a known Web Audio subtlety
+independent of a sine's lack of harmonics to actually filter.
+
+**Theory (1) doesn't hold up against this codebase's own code**: the FFT
+is already throttled to every ~300ms (`FREQ_RECOMPUTE_INTERVAL_MS`), not
+every packet — and that throttle is identical for all four voices, so if
+compute load were the cause, Cello/Viola/Violin would show the same
+artifact, which nobody reported.
+
+**Actual root cause, confirmed by inspection**: that same 300ms throttle
+gated the *entire* rest of `updateAudio()` — not just the FFT, but gain
+and brightness too (flagged by the code's own prior comment: "throttles
+ALL native calls below, not just frequency"). Gain/frequency/brightness
+all used a short `setTargetAtTime()` time constant (0.05-0.08s) that
+reached its target well within the 300ms gap and then sat perfectly flat
+until the next recompute — a periodic "snap, then hold" pattern repeating
+~3.3x/sec. That's an audible periodic modulation on its own, independent
+of CPU load. A pure sine has no harmonic content to mask this; the
+sample-based voices' own continuous timbral motion (bow noise, vibrato,
+broadband harmonics) buried it completely — which is exactly why only
+Custom exposed the problem, and why Flutter's (presumably more
+continuously-updated) pure tone sounded clean by comparison.
+
+**Fix, in `audio.js`, applied to all four voices** (confirmed to help
+everyone and not just Custom, discussed and confirmed with the user
+before implementing — see git history for the specific exchange):
+- **Gain/brightness decoupled from the FFT throttle** — they now update
+  every call (real BLE packet cadence, ~50Hz), removing the periodic
+  volume stepping entirely. Only the FFT/frequency recompute itself stays
+  on the 300ms throttle (unavoidable — it's genuinely expensive at full
+  packet rate).
+- **`FREQ_RAMP_TIME_CONSTANT`** (new named constant, `0.25`, replacing the
+  previous ad hoc `0.05` inline in both `SampleVoice.setFrequency()` and
+  `SineVoice.setFrequency()`) — lengthened so pitch glides continuously
+  across close to the full 300ms gap between FFT recomputes, instead of
+  snapping to target early and then holding flat.
+
+Not yet re-confirmed via `SONIFICATION_DEBUG_LOGGING` + an actual
+on-device listening test — flip that flag to watch `smoothedFreq` for
+stability (supports this theory) vs. wild jitter (would instead point
+back toward the FFT-load theory) if the artifact persists.
+
+## Follow-up fix — Custom's pitch source replaced (FFT → direct level)
+On-device re-test after the fix above: Cello/Viola/Violin sounded
+noticeably better, but Custom's sine still buzzed/pulsed. Compared
+against the team's actual production sonification — not the HTML
+prototype's dead/commented-out "AUDIO ENGINE 2.0" experiment (sawtooth +
+triangle + filter `StringVoice`), which turned out to be unused code and
+briefly, incorrectly, treated as the reference — but the real deployed
+engine, `src/sp/hooks/use-tremor-audio.ts` in the team's TanStack/React
+PWA repo, confirmed via direct source review (and tracing its call site
+in `app.active.tsx` → `use-active-session.ts`'s `onSample`).
+
+**What that engine actually does, confirmed by reading it directly:**
+- Three oscillators — `sine` (X, 220Hz), `sine` (Y, 200Hz), `triangle`
+  (Z, 110Hz). **The sine waveform itself is proven innocent** — it's
+  already in production, sounding clean.
+- **No FFT anywhere in the pitch path.** Pitch comes from `std()`
+  (standard deviation of the rolling per-axis window — see `tremor.ts`),
+  fed through `freq = base * 2^(octaveSpread * min(1, sd/2))`. `std()`
+  is cheap and continuously computable; there's no estimation noise, no
+  recompute-interval lag, nothing to smooth.
+- Called directly from every raw BLE sample (`onSample`), with **zero
+  throttling** — confirmed by reading the call chain, not assumed.
+
+This reframes the real cause for Custom specifically: this engine's
+pitch comes from `combinedDominantFreq()`, an FFT over a 5-second window
+recomputed only every 300ms — a meaningfully noisier, laggier pitch
+source than a continuously-computed `std()`, even after lengthening the
+ramp time constant in the fix above (which smoothed the symptom without
+removing the underlying jitter in the signal feeding it). A sine has no
+harmonic content to mask that residual jitter; Viola's sample timbre
+buries the exact same FFT jitter completely — which is why only Custom
+kept buzzing even after the first fix helped everyone else.
+
+**Fix, in `audio.js`, scoped to Custom only** (a deliberate, explicitly
+user-confirmed design change — see the exchange in this session's
+history before implementing): Custom's pitch no longer uses the FFT path
+at all.
+- New branch in `updateAudio()`: when `activeVoiceName === 'custom'`,
+  pitch is computed directly from `normLevel` — the same already-
+  calibrated 0-100 tremor level already used for gain, not a new signal
+  — via `freq = minFreq * (maxFreq/minFreq) ^ normLevel` (exponential/
+  octave interpolation, not linear-Hz, matching the PWA's own
+  octave-based approach and giving equal perceptual pitch steps for
+  equal level changes). No FFT, no throttle, recomputed every packet,
+  then returns early — skipping the FFT-gated section below entirely.
+- Deliberately reuses the existing `tremorLevel`/`normLevel` (already
+  tied to the user's own calibrated `fullScaleG`) rather than computing
+  a fresh `std()`-based measure from `recentX/Y/Z` — avoids introducing
+  a second, differently-calibrated "how much movement counts as
+  maximal" scale alongside the one the rest of the app already uses.
+- New `CUSTOM_FREQ_RAMP_TIME_CONSTANT` (`0.05`, matching the PWA's own
+  continuously-updated oscillators) for `SineVoice.setFrequency()` —
+  much shorter than `FREQ_RAMP_TIME_CONSTANT` (`0.25`, still used by
+  `SampleVoice`/Cello/Viola/Violin), appropriate now that Custom's pitch
+  recomputes every ~20-40ms rather than every 300ms.
+- **Cello/Viola/Violin are completely untouched** — they keep the
+  original "pitch = FFT dominant tremor frequency" design. This is a
+  deliberate scope boundary, not an oversight: that design isn't broken
+  for them (their sample timbre already masks FFT jitter fine), and
+  reintroducing the PWA's actual three-simultaneous-axis-voice
+  architecture to those voices would undo the project's own earlier,
+  deliberate "single combined voice" redesign (see that section above).
+
+**Genuine behavior change, confirmed with the user before implementing**:
+Custom's pitch now represents "how much the motion is spreading" (an
+amplitude-like measure) rather than "the tremor's own oscillation rate" —
+matching what the proven-clean production PWA actually does, but a real
+semantic change from the original "pitch = dominant frequency" spec,
+scoped to Custom only.
+
 ## Configurable sensitivity calibration
 `FULL_SCALE_G` (the amount of motion that reads as intensity 100) is
 now user-adjustable via Settings, rather than a fixed constant —
@@ -1205,6 +1326,387 @@ spec: None (0-19, green) / Mild (20-44, blue) / Moderate (45-69, amber)
 / High (70-100, red) — previously None/Mild/Moderate/**Severe** at
 15/40/65 with a slightly different color set. Updated in
 `liveSession.js` (thresholds) and `RecordingScreen.js` (colors).
+
+## Second follow-up fix — Custom's residual ~1-2s pulsation
+Still on-device, after the FFT-removal fix above: Cello sounded clean, and
+Custom's tone itself was much cleaner, but a periodic pulsation every
+~1-2 seconds remained — not present on Cello, and not present on the
+Flutter/PWA app.
+
+**Leading explanation**: `tremorLevel` is the RMS of a ~2-second rolling
+window (`ROLL_WIN` in `liveSession.js`). If the actual motion being
+measured has its own period anywhere near that window length (e.g. a
+deliberate ~0.5-1Hz test shake — plausible, since that's a natural,
+comfortable rate to wave a phone by hand, well *below* the 3-14Hz
+physiological tremor band this whole system (band-pass, window length)
+is actually tuned for), a window that short relative to the signal's own
+period doesn't produce a flat RMS value — it genuinely ripples once per
+cycle of the input motion. That ripple has always been present in
+`tremorLevel` and already fed gain on every voice, but a volume ripple is
+subtle, easy to miss, especially under a sample's own texture. Once
+Custom's *pitch* started tracking that same level signal (the prior
+fix), every bit of that ripple became an audible pitch wobble instead —
+the ear is far more sensitive to pitch modulation than volume modulation
+of the same relative size, and a bare sine has nothing to mask it with.
+Cello's pitch is immune since it's still FFT/frequency-domain-based,
+which doesn't care how much the amplitude envelope ripples.
+
+**Fix, in `audio.js`, scoped to Custom's pitch only** (gain stays fully
+responsive/unsmoothed, as before): a new `customSmoothedLevel` module
+variable, blended each packet via `CUSTOM_LEVEL_SMOOTHING_ALPHA` (`0.05`,
+~0.4s time constant at the engine's assumed ~50Hz cadence) before feeding
+the exponential pitch-mapping formula. Reset alongside the engine's other
+per-session state in `initAudio()`/`silenceAudio()`.
+
+**Known limitation, confirmed via simulation, not yet re-tested
+on-device**: this time constant meaningfully damps a ~1Hz ripple (~60%
+reduction) but only partially damps a slower ~0.5Hz one (~37%
+reduction) — going heavier would start making pitch noticeably sluggish
+to respond to genuine tremor onset/offset, a tradeoff not made without
+user input. Also worth directly testing: shaking at an actual
+tremor-like rate (4-8Hz, well above the 2-second window's resolution)
+rather than a slower deliberate test shake — if the pulsation
+disappears entirely at a realistic tremor rate, this is largely a
+bench-testing artifact from testing below the system's designed
+frequency range, not something real patients would hear.
+
+## Third follow-up fix — pulsation narrowed to level-transition moments
+On-device re-test: the smoothing fix reduced the pulsation's frequency,
+but it still occurred — now reported specifically WHILE the tremor level
+is actively rising or falling, not during a steady level. That's a
+different signature than the windowed-RMS-ripple theory above (which
+would predict steady-state ripple regardless of whether the level is
+changing), pointing at something else.
+
+**Leading explanation**: Cello's pitch gets a new value at most
+~3.3x/sec (`FREQ_RECOMPUTE_INTERVAL_MS`). Custom's `FREQ_EPSILON` gate,
+by contrast, rarely trips during a STEADY level (the computed frequency
+stays within 2Hz of `lastSent.freq`, so `setFrequency()` is barely
+called) but trips on nearly every packet while the level is actively
+changing (the target keeps drifting past the epsilon) — meaning Custom
+can burst 40-50 `setFrequency()` calls/sec specifically during the
+moments this reportedly occurs, far more than Cello ever issues. This
+exact native audio library has already shown a real scheduling
+limitation once before in this project — the `cancelScheduledValues()`
+SIGSEGV (see "Crash fix" above), traced to however many accumulated
+AudioParam automation events had built up. A burst of rapid-fire
+`setFrequency()` calls landing on the native audio graph is a plausible
+trigger for a similar, non-crashing glitch, and lines up with "occurs
+during changes, not during steady tremor" much better than the earlier
+windowed-RMS theory does.
+
+**Fix, in `audio.js`, scoped to Custom only**: new
+`CUSTOM_PITCH_UPDATE_INTERVAL_MS` (`50`ms, ~20/sec) throttles only the
+actual native `setFrequency()` push — `customSmoothedLevel` itself still
+updates every packet (cheap, pure JS, no native call). Still far more
+responsive than Cello's 300ms, while cutting Custom's native call volume
+during transitions by more than half. New `lastCustomPitchUpdateTime`
+module variable, reset alongside the engine's other per-session state in
+`initAudio()`/`silenceAudio()`.
+
+Not yet re-tested on-device — if this doesn't fully resolve it, the next
+things to try, in rough order of how likely they are to help: lengthen
+`CUSTOM_PITCH_UPDATE_INTERVAL_MS` further (trades responsiveness),
+increase `FREQ_EPSILON` (coarser pitch resolution, fewer calls), or
+revisit whether the windowed-RMS theory from the prior fix is actually
+the dominant factor after all (in which case lengthening
+`CUSTOM_LEVEL_SMOOTHING_ALPHA`'s time constant would be the next lever).
+
+## Fourth follow-up fix — gain/brightness were never smoothed either
+On-device re-test: better, but the pulsation still occurred during
+intensity changes, in both directions (rising and falling). This is the
+actual, complete root cause, found by tracing the signal's own update
+cadence rather than theorizing further about the oscillator or the
+native library.
+
+**Root cause**: `tremorLevel` — the single value driving both gain and
+pitch — is NOT continuous. It's recomputed by `updateLiveMetrics()`'s
+own separate 300ms timer in `liveSession.js`, not by `updateAudio()`
+itself. So even though `updateAudio()` runs every packet (~20ms), the
+*value* it reads only changes ~3.3x/sec — a staircase, not a smooth
+curve. During a steady tremor, consecutive steps are nearly identical,
+so the staircase is invisible. During an actively rising or falling
+level, each 300ms step is a real, audible jump. The two fixes above
+smoothed PITCH against exactly this — but **gain and brightness were
+never smoothed at all**, directly exposed to this same staircase since
+the very first build, on every voice. A volume jump every 300ms during a
+change is a literal pulsation, in both directions — this has likely
+been the dominant real cause all along, just far less audible wrapped in
+Viola's/Cello's own texture than on a bare sine (the same "sine exposes
+everything" theme throughout this entire investigation).
+
+**Fix, in `audio.js`, scoped to Custom only**: restructured
+`updateAudio()` so the `activeVoiceName === 'custom'` branch now runs
+*first* and handles gain, brightness, AND pitch together, all three
+reading the SAME `customSmoothedLevel` already computed for pitch,
+instead of gain/brightness using raw `normLevel`. This closes two gaps
+at once: the staircase itself (now smoothed before it reaches any
+AudioParam), and a subtler, separate risk — gain/brightness snapping
+instantly to each new step while pitch glides smoothly beside them,
+which could itself read as a mismatched-timing artifact independent of
+the staircase. Cello/Viola/Violin's gain/brightness remain fully
+unsmoothed/responsive in the generic path below, unchanged — nobody has
+reported this as a problem for them, so there's no reason to trade away
+their responsiveness pre-emptively.
+
+Not yet re-tested on-device. If a residual pulsation still survives
+this, that would point at something other than the level signal itself
+— worth getting a `SONIFICATION_DEBUG_LOGGING` capture at that point
+(now also prints `gain=` alongside `level=`/`smoothedLevel=`/`freq=`)
+during an actual episode, rather than continuing to theorize blind.
+
+## Fifth follow-up fix — smoothing gain/brightness made the pulsation faster, not gone
+
+Tested on-device: the fourth fix above made things worse in a specific
+way — the pulsation became noticeably *more rapid*, and was now
+perceived as *closer in pitch* to the main tone rather than a separate
+low thump.
+
+Root cause: `customSmoothedLevel` creeps toward its target by a small
+amount on every packet (`updateAudio()` runs at BLE packet cadence,
+roughly every 20ms), using a fixed per-packet alpha rather than a true
+time-based decay. `GAIN_EPSILON` (0.03) and `BRIGHT_EPSILON` (0.02) are
+small enough that nearly every packet's tiny creep still exceeds them,
+so `setGain()`/`setBrightness()` were calling into the native
+`setTargetAtTime()` ramp on almost every packet during a transition —
+a brand new ramp target arriving every 20-40ms, well before the
+previous ramp had settled. Repeatedly re-targeting an exponential ramp
+that fast is itself a form of amplitude modulation, at a packet-rate
+frequency (tens of Hz) — which is exactly "more rapid," and which
+shows up acoustically as sidebands sitting close to the carrier
+frequency — exactly "closer in pitch to the underlying tone." Pitch
+was already spared this because `CUSTOM_PITCH_UPDATE_INTERVAL_MS`
+already throttled its native push; gain/brightness had no such
+throttle, so they took the full brunt of it once they started reading
+the continuously-creeping smoothed value instead of the static
+per-300ms raw value.
+
+**Fix, scoped to Custom only**: gain and brightness now sit behind the
+exact same throttle gate as pitch (`CUSTOM_PITCH_UPDATE_INTERVAL_MS`,
+the same clock/variable), so all three only reach the native
+AudioParams once per interval, together — instead of gain/brightness
+retargeting on every packet while pitch waits for its turn.
+`customSmoothedLevel` itself still updates every packet underneath
+(cheap, pure JS); only how often that value is actually pushed into
+the native audio graph is gated now. Cello/Viola/Violin are untouched.
+
+Not yet re-tested on-device.
+
+## Sixth follow-up — diagnostic build for a within-session escalation report
+
+Latest on-device report changes the picture: the sixth build (throttled
+gain/brightness) started out clean, but the pulsation got MORE frequent
+the longer the session ran, only during active level changes — never at
+rest, never while holding a steady level.
+
+That pattern doesn't fit a pure per-transition artifact (which should
+behave identically regardless of how long the session has been running).
+It does fit scheduled-`AudioParam`-event accumulation on the native
+audio engine: this exact library (`react-native-audio-api`) has already
+caused one confirmed crash from exactly that — a SIGSEGV inside its own
+`cancelScheduledValues()`, traced to however many automation events had
+piled up by that point in a longer session (see the dated note near the
+top of `audio.js`). We can't call `cancelScheduledValues()` to clear
+that backlog — that's the same call that crashed it. Custom's oscillator
+is also a single node that's lived for the entire session since
+`initAudio()`, pushed roughly 6x more often (every 50ms) than Cello's
+pitch-shifter AudioParam ever is (every 300ms) — so if events really are
+piling up unboundedly, Custom should accumulate noticeably faster.
+
+Rather than restructure Custom's update architecture on this theory
+alone, the diagnostic console log (`SONIFICATION_DEBUG_LOGGING`) is
+temporarily flipped **on** in this build, and now also prints
+`elapsedSec` (time since the session's audio started) and `pushCount`
+(a running total of native setFrequency/setGain/setBrightness calls made
+on Custom since then). The idea: if pulsation onset/worsening tracks a
+rising `pushCount` specifically, that confirms event accumulation as the
+cause. If it tracks elapsed time regardless of how many pushes have
+actually happened (e.g. mostly holding steady, few pushes logged, but it
+still degrades), that rules accumulation out and points somewhere else
+entirely.
+
+**Next step**: run a session on Custom long enough to reproduce the
+escalation, watching the Metro/Xcode console, and capture the log lines
+around when the pulsation starts and when it visibly worsens (the
+`elapsedSec=`/`pushCount=` values at those moments are the key data).
+`SONIFICATION_DEBUG_LOGGING` should be flipped back to `false` once this
+is resolved — it's left on for this one diagnostic build only.
+
+### Diagnostic bug found and fixed before the data meant anything
+
+A real device log from a motionless ("at rest") run showed `pushCount`
+climbing at essentially the same rate (~17/sec) as a run where the level
+was actively changing throughout — even though `gain`/`freq` never moved
+off their resting values in that log. That's a contradiction: if nothing
+is being pushed to the native audio graph, the count shouldn't be
+climbing at all. Looking at the code confirmed why: `customPushCount`
+was incremented right after the 50ms throttle gate opened, unconditionally
+— before the epsilon checks that decide whether `setGain()`/
+`setBrightness()`/`setFrequency()` actually get called. So it was only
+ever measuring "how many times has 50ms elapsed," i.e. elapsed time in
+disguise, completely confounded with the one variable the whole
+diagnostic exists to separate from elapsed time.
+
+**Fix**: replaced the single `customPushCount` with three separate
+counters (`customGainPushCount`, `customBrightPushCount`,
+`customFreqPushCount`), each incremented only inside the branch that
+actually calls into its native `AudioParam` — i.e. only when the
+epsilon check trips and a real automation event is scheduled. Kept as
+three separate counters rather than one combined total because gain,
+brightness, and frequency are three distinct `AudioParam`s with
+independent internal event histories; collapsing them into one number
+would hide it if, say, only frequency's history was the one ballooning.
+All prior log data collected before this fix is unusable for telling
+accumulation apart from elapsed time and needs to be re-captured.
+
+## Seventh follow-up — accumulation theory rejected; real cause found and fixed
+
+A real device log (with the corrected per-parameter push counters above)
+gave a clean answer. In a session only 27 seconds old:
+
+- Pulsation was first heard at `elapsedSec≈5`, right at the moment
+  motion began after a steady hold — `level` jumped 38→100 within about
+  2 seconds, and `freqPush` burst by ~35 in that same window (~15/sec).
+- Pulsation clearly worsened at `elapsedSec≈25`, during the most
+  vigorous, fastest-swinging motion in the whole capture — `level`
+  swinging from near 0 up to 98 and back in sub-second jumps, with
+  `freqPush` climbing at ~15.6/sec, close to the 20/sec throttle ceiling.
+
+Severity tracked the RATE and SIZE of level swings, not elapsed session
+time — the opposite of what the accumulation theory predicts (which
+would show gradual worsening over minutes regardless of how vigorously
+the device was being moved). The "escalates over a long session" read
+from the original report was most likely just this: people naturally
+shake harder and vary their motion more as a test session goes on,
+confounding elapsed time with vigor. **Accumulation is rejected as the
+cause.**
+
+**Real mechanism**: `setTargetAtTime()` schedules an *exponential*
+approach toward a target. Every time a new value lands before the
+previous approach has finished — which happens up to ~20x/sec (the
+throttle ceiling) during vigorous motion — the curve's direction kinks.
+Each kink is a small discontinuity in the derivative of gain, pitch, or
+brightness, and enough of them close together, happening faster during
+bigger/faster swings, is audible as pulsation that gets worse exactly
+when motion is more vigorous — matching the log precisely.
+
+**Fix, scoped to Custom only**: `SineVoice`'s `setFrequency`/`setGain`/
+`setBrightness` now use `linearRampToValueAtTime()` instead of
+`setTargetAtTime()`, each ramp explicitly anchored with
+`setValueAtTime()` at the parameter's current value and spanning the
+ACTUAL elapsed time since that specific parameter's own previous push
+(tracked per-parameter, since gain/brightness/frequency don't always
+push on the same tick — their epsilon gates differ) rather than a fixed
+assumed interval. Consecutive linear ramps chain together with no
+curve-direction kink at the seams, regardless of how fast or large the
+underlying swings are. Cello/Viola/Violin's pitch-shifter keeps its
+original `setTargetAtTime()` ramp, unchanged — nobody has reported this
+as a problem there.
+
+**CONFIRMED on-device**: a repeat of the same hold-steady-then-move
+pattern that reliably produced pulsation in every prior build —
+including the exact same fast, large transition that triggered onset
+at ~5s last time — produced no audible pulsation at all. `SONIFICATION_DEBUG_LOGGING`
+has been flipped back to `false` now that this is resolved.
+
+This closes out the Custom sonification buzz/pulsation investigation
+that ran across the Viola→sine switch, the PWA-engine research, and
+seven follow-up rounds: the final, confirmed root cause was
+`setTargetAtTime()`'s exponential-ramp retargeting kinking under fast,
+frequent target changes — not FFT load, not windowed-RMS ripple, not
+native scheduling bursts alone, and not event accumulation, each of
+which was investigated and ruled out (or only partially addressed) in
+turn before arriving here.
+
+## Eighth follow-up — sonification kept playing after End Session (Custom only)
+
+Reported shortly after the Seventh follow-up shipped: on a continuous
+session using Custom Tonal Range, with Sonification toggled on mid-session,
+pressing End Session didn't reliably silence the tone — it kept audibly
+playing afterward.
+
+Ruled out first, since they're the obvious suspects for an audio-after-stop
+bug and had both been touched recently: the `audioHook` wiring in
+`liveSession.js` (a live module-level variable, re-read fresh on every
+`pushPacket()` call — not a stale closure), `RecordingScreen`'s
+`audioEnabled`-keyed effect (correctly calls `silenceAudio()` +
+`setAudioHook(null)` on cleanup), and `endSession()`'s own explicit
+`silenceAudio()` + `setAudioHook(null)` calls (added specifically because
+`RecordingScreen` stays mounted under `Summary` via navigation, so
+unmount-based cleanup doesn't fire at end-of-session time). All three were
+confirmed working correctly — none of them explains the bug.
+
+**Real cause**: self-inflicted by the Seventh follow-up's own fix.
+Switching Custom's `SineVoice` to `linearRampToValueAtTime()` gave each
+parameter a discrete, scheduled-in-advance end time — unlike
+`setTargetAtTime()`'s open-ended asymptotic curve, which has no future
+event to leave dangling. `stopHard()`'s `setValueAtTime(0, t)` does not
+cancel an already-scheduled ramp (`cancelScheduledValues()` is avoided
+project-wide here; see the SIGSEGV note earlier in this file). Per the Web
+Audio automation-event model, events are ordered by time regardless of
+call order, so the fresh `setValueAtTime(0, t)` just becomes that ramp's
+new starting point — the still-pending ramp fires anyway, carrying gain
+back up from 0 to its last target by its original end time, and then sits
+there, since nothing after it says otherwise. Because gain pushes happen up
+to 20x/sec during an active session right up until End Session is pressed,
+a pending ramp in flight at that exact moment was routine, not a rare edge
+case. Cello/Viola/Violin's `SampleVoice` was never at risk, since its gain
+is still driven by `setTargetAtTime()`.
+
+**Fix, scoped to Custom only**: `SineVoice` now tracks each parameter's
+most recently scheduled ramp end time (`gainRampEndTime`, `freqRampEndTime`,
+`brightRampEndTime`, updated by `setGain`/`setFrequency`/`setBrightness`
+every time they schedule a new ramp). `stopHard()` checks each one and, if
+it's still in the future, schedules a second override — silence for gain,
+current value held steady for frequency/brightness — timed to land
+`STALE_RAMP_GUARD_SEC` (10ms) *after* that ramp's own end time, not at the
+exact same instant. The buffer matters: two automation events tied at the
+same timestamp have implementation-defined precedence, and landing
+strictly after sidesteps that ambiguity entirely rather than trading one
+rare bug for another. The result is a brief (bounded, same-order-as-the-
+ramp-itself) resurgence immediately silenced again, instead of audio stuck
+playing indefinitely.
+
+Pending on-device confirmation: repeat the reported repro (Custom Tonal
+Range, continuous session, toggle Sonification on a few seconds in, run for
+a minute, End Session) and confirm the tone actually stops.
+
+## Ninth follow-up — faint tone persisted at true rest (Custom only)
+
+Reported alongside the Eighth follow-up's bug, described as a recurrence of
+something already fixed once before, for the three stringed tonal ranges:
+with Custom Tonal Range selected, after tremoring and then returning the
+stick to rest (Intensity reading of 0), a slight tone kept playing instead
+of going fully silent.
+
+**Cause**: Cello/Viola/Violin's gain/brightness read raw `normLevel`
+directly, every call, unsmoothed — so at true rest (`normLevel=0`) their
+gain is exactly 0 on the very next packet, with no lag. Custom's
+gain/brightness, since the Fourth follow-up, instead read
+`customSmoothedLevel`, an exponential blend introduced to stop gain/
+brightness jumping in audible steps during active transitions.
+Exponential decay only ever approaches 0 asymptotically — it never
+mathematically reaches it — and `GAIN_EPSILON`/`BRIGHT_EPSILON` only push a
+new value to the native oscillator when it differs from the last one by
+more than the epsilon. As the decay nears rest its per-packet steps shrink
+below that epsilon and simply stop being pushed, stranding gain at
+whatever small nonzero value it last reached — indefinitely, since nothing
+afterward is different enough to trip the gate again. That stranded value
+is the "slight sound."
+
+**Fix, scoped to Custom only**: `normLevel === 0` (true rest) is now a
+special case. `customSmoothedLevel` snaps directly to `0` instead of
+blending toward it, and the gain/brightness push below is allowed to fire
+unconditionally — bypassing `GAIN_EPSILON`/`BRIGHT_EPSILON` — whenever the
+last value sent isn't already exactly `0`. This guarantees rest always
+actually completes the trip to true silence, the same way Cello/Viola/
+Violin already do, without touching their unsmoothed path or weakening the
+epsilon gates that fixed the Fourth follow-up's pulsation during genuine
+active transitions — the bypass only ever applies once motion has fully
+stopped.
+
+Pending on-device confirmation: tremor, let intensity settle back to a
+displayed 0, and confirm no audible tone remains.
 
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
