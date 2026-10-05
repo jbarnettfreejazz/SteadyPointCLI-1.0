@@ -160,7 +160,71 @@ const DUAL_LAYER_ENABLED = false;
 // fix resolved the pulsation (no pulsation during the exact same
 // fast/large transitions that reliably reproduced it before), so back
 // to off.
-const SONIFICATION_DEBUG_LOGGING = false;
+//
+// TENTH follow-up: back on again — reported "lower tonal range sounds
+// buzzy, higher is smooth" on Custom. Ruled out via quick no-code test:
+// raising the Custom range's floor from 200Hz to 400Hz did NOT move or
+// remove the buzz, so it isn't a fixed absolute-Hz band. Need a real
+// capture (freq/gain/smoothedLevel per push, same fields as before) with
+// onset/offset narrated against elapsedSec to find the real correlation,
+// same methodology that found the actual pulsation cause.
+//
+// CONFIRMED (see the bisection test below): the buzzing was the
+// BiquadFilter node, not Custom-specific and not a scheduling issue.
+// Debug logging no longer needed for this investigation — back to off.
+//
+// ELEVENTH follow-up: back on again — investigating the reported
+// "sonification continues after End Session" recurrence (Custom only,
+// inconsistent duration across repeats — stops immediately / a few
+// seconds / until Return to Home / past Home). Combined with the new
+// absolute-timestamp '[sonification:hook]' (liveSession.js) and
+// '[sonification:silence]' logs, a capture around End Session should
+// show whether a packet is reaching updateAudio() after setAudioHook(null)
+// runs (a hook re-registration or a late-arriving-packet race) or
+// whether the EIGHTH follow-up's existing stopHard() guard is simply
+// being outrun by a ramp scheduled after silenceAudio() already ran.
+const SONIFICATION_DEBUG_LOGGING = true;
+
+// TENTH follow-up, continued: the debug-log capture showed buzzing present
+// even during several seconds of a completely static hold (fixed
+// frequency, fixed gain, zero automation events firing) — ruling out
+// every scheduling/retargeting-rate theory above. Confirmed present on
+// Cello too (just less noticeable, "more integrated" into its own sample
+// texture) — so this isn't Custom-specific or oscillator-specific either;
+// it's shared chain. SampleVoice and SineVoice share nothing but the
+// BiquadFilter -> GainNode -> StereoPannerNode -> masterGain -> destination
+// plumbing and the underlying AudioContext, so bisect that shared chain:
+// flip one of these to true to route around that node (construction-time
+// wiring — restart the app/session after changing either) and see which
+// one, if any, makes the buzz go away. Brightness has no audible effect
+// while BYPASS_FILTER is true (the filter is simply not in the signal
+// path), and panning is lost while BYPASS_PANNER is true — both expected,
+// diagnostic-only side effects.
+//
+// CONFIRMED on-device with BYPASS_FILTER=true: the buzzing is completely
+// gone on both Custom and Cello, across thorough testing. The
+// BiquadFilterNode is the real root cause. Two things surfaced during
+// that same testing, both logged here and deliberately NOT addressed yet
+// (by explicit choice, to keep this fix focused):
+//   1. A periodic/intermittent pulsation on Cello specifically, not
+//      present on Custom. Possibly the long-standing, deliberately-
+//      unsmoothed Cello gain path (see the THIRD-follow-up-era comment on
+//      "Gain/brightness (Cello/Viola/Violin only)" further below) being
+//      slightly more exposed now that the filter isn't incidentally
+//      softening transients — unconfirmed, not yet investigated.
+//   2. The intermittent "sonification continues after End Session" bug
+//      recurring in some new case, separate from the EIGHTH follow-up's
+//      stale-ramp fix (which was Custom/SineVoice-specific) — repro not
+//      yet captured.
+// DECISION: ship with BYPASS_FILTER=true rather than chase a filter fix
+// or a brightness replacement right now — clean tone takes priority, and
+// brightness is paused (not removed) until the filter question is
+// revisited. So despite the name, this is the deliberate current
+// shipping configuration, not a temporary diagnostic-only state; treat
+// changing it back to false as a real product decision, not a revert.
+// BYPASS_PANNER was never implicated and stays false.
+const BYPASS_FILTER = true;
+const BYPASS_PANNER = false;
 
 class SampleVoice {
   constructor(ctx, { pan, referenceFreq, trimDb = 0 }) {
@@ -177,18 +241,24 @@ class SampleVoice {
 
     // Lowpass filter kept for the same "brightness" expressive control as
     // before, layered on top of whichever velocity blend is playing.
+    //
+    // TENTH follow-up: BYPASS_FILTER/BYPASS_PANNER (see their comment
+    // above) route around this node, or the StereoPannerNode below, for
+    // the shared-chain bisection test — the filter object still exists
+    // (setBrightness() below stays harmless) but isn't wired into the
+    // signal path when bypassed.
     this.filter = ctx.createBiquadFilter();
     this.filter.type = 'lowpass';
     this.filter.frequency.value = 2400;
     this.filter.Q.value = 1.0;
-    this.filter.connect(this.output);
-    this.output.connect(this.pan);
+    if (!BYPASS_FILTER) this.filter.connect(this.output);
+    if (!BYPASS_PANNER) this.output.connect(this.pan);
 
     // Compensates for how quiet the source recording actually is (measured
     // peak, not just assumed) — see TRIM_DB above.
     this.trim = ctx.createGain();
     this.trim.gain.value = Math.pow(10, trimDb / 20);
-    this.trim.connect(this.filter);
+    this.trim.connect(BYPASS_FILTER ? this.output : this.filter);
 
     // Soft and loud velocity layers play simultaneously at all times, each
     // through its own gain node — setIntensity() crossfades between them.
@@ -207,7 +277,7 @@ class SampleVoice {
   }
 
   connect(node) {
-    this.pan.connect(node);
+    (BYPASS_PANNER ? this.output : this.pan).connect(node);
   }
 
   // Loads both velocity layers together and keeps them phase-locked — see
@@ -346,12 +416,16 @@ class SineVoice {
     // this mostly has no effect (a sine has no harmonics to filter out),
     // but is kept for consistency/headroom if the waveform type changes
     // later, and costs nothing to leave in.
+    //
+    // TENTH follow-up: BYPASS_FILTER/BYPASS_PANNER (see their comment near
+    // SONIFICATION_DEBUG_LOGGING) route around this node, or the
+    // StereoPannerNode below, for the shared-chain bisection test.
     this.filter = ctx.createBiquadFilter();
     this.filter.type = 'lowpass';
     this.filter.frequency.value = 2400;
     this.filter.Q.value = 1.0;
-    this.filter.connect(this.output);
-    this.output.connect(this.pan);
+    if (!BYPASS_FILTER) this.filter.connect(this.output);
+    if (!BYPASS_PANNER) this.output.connect(this.pan);
 
     this.osc = ctx.createOscillator();
     this.osc.type = 'sine';
@@ -360,7 +434,7 @@ class SineVoice {
     // maxFreq's midpoint-ish rather than the Web Audio default (440Hz) just
     // so a stray early update isn't a jarring out-of-range jump.
     this.osc.frequency.value = maxFreq;
-    this.osc.connect(this.filter);
+    this.osc.connect(BYPASS_FILTER ? this.output : this.filter);
     this.osc.start(ctx.currentTime);
 
     // EIGHTH follow-up: see stopHard()'s comment below — these track each
@@ -377,7 +451,7 @@ class SineVoice {
   }
 
   connect(node) {
-    this.pan.connect(node);
+    (BYPASS_PANNER ? this.output : this.pan).connect(node);
   }
 
   // SEVENTH follow-up: a real device log (see README) showed pulsation
@@ -482,6 +556,16 @@ let activeVoiceName = 'cello';
 
 export function setActiveVoice(name) {
   activeVoiceName = VOICE_CONFIG[name] ? name : 'cello';
+}
+
+// THIRTEENTH follow-up: undoes silenceAudio()'s masterGain mute. Called
+// once at the start of each new session (sessionLogic.js's startSession(),
+// alongside setActiveVoice()/setCustomTonalRange()) rather than inside
+// initAudio() itself, since initAudio() is a one-time, idempotent
+// construction no-op after the first session (see its own "if (audioCtx)
+// return" guard) and so wouldn't run again for session 2 onward.
+export function unmuteAudio() {
+  if (masterGain) masterGain.gain.value = MASTER_GAIN_LEVEL;
 }
 
 // Called once at startSession() time (see sessionLogic.js) with the user's
@@ -652,6 +736,38 @@ let customFreqLastPushMs = 0;
 // reasonable default.
 const CUSTOM_RAMP_FALLBACK_SEC = CUSTOM_PITCH_UPDATE_INTERVAL_MS / 1000;
 
+// FOURTEENTH follow-up: upper bound on every Custom linear ramp. The
+// SEVENTH follow-up sized each ramp to the real elapsed time since that
+// parameter's previous push — correct during active change, but that gap
+// is UNBOUNDED: GAIN_EPSILON (0.03 on a 0-0.25 gain range, ~8 steps
+// total) means gain pushes stop entirely during any steady stretch, so
+// the next push after a hold gets a ramp as long as the hold itself. A
+// real device log showed rampSec values of 2-9s routinely (22 of 73 gain
+// pushes >1s, max 9.36s). Effects: (1) volume responds seconds late after
+// any steady stretch; (2) a long ramp still in flight when stopHard() runs
+// isn't cancelled (cancelScheduledValues() is unsafe here — see the
+// SIGSEGV note at the top), so it climbs back up from 0 until its
+// original end time — the mechanism behind sound at displayed Intensity 0
+// and the variable-length post-End-Session sound (now also backstopped by
+// the THIRTEENTH follow-up's masterGain mute).
+//
+// 0.3s rather than something shorter: the same log shows gaps between
+// consecutive pushes during genuine active change are mostly 0.12-0.36s,
+// so a 0.3s cap leaves the SEVENTH follow-up's seamless ramp chaining
+// intact during motion (avoiding a "ramp, then hold" stepping pattern,
+// the kind of periodic modulation fixed several follow-ups ago), while
+// bounding post-hold lag and any stale-ramp resurgence to 0.3s.
+const CUSTOM_RAMP_MAX_SEC = 0.3;
+
+// Ramp length for a Custom push: real elapsed time since this parameter's
+// previous push (SEVENTH follow-up), capped at CUSTOM_RAMP_MAX_SEC
+// (FOURTEENTH follow-up); falls back to CUSTOM_RAMP_FALLBACK_SEC for the
+// first push of a session.
+function customRampSec(nowMs, lastPushMs) {
+  if (!lastPushMs) return CUSTOM_RAMP_FALLBACK_SEC;
+  return Math.min((nowMs - lastPushMs) / 1000, CUSTOM_RAMP_MAX_SEC);
+}
+
 // SIXTH follow-up diagnostic: reported pulsation starts clean at session
 // start, gets MORE frequent the longer the session runs, and only during
 // active level changes (never at rest or holding steady) — a pattern
@@ -740,12 +856,17 @@ export function isAudioInitialized() {
   return !!audioCtx;
 }
 
+// THIRTEENTH follow-up: named so silenceAudio()'s mute and
+// unmuteAudio()'s restore (below) can't drift out of sync with the
+// value set here at construction.
+const MASTER_GAIN_LEVEL = 0.93;
+
 export function initAudio() {
   if (audioCtx) return;
   audioCtx = new AudioContext();
 
   masterGain = audioCtx.createGain();
-  masterGain.gain.value = 0.93;
+  masterGain.gain.value = MASTER_GAIN_LEVEL;
   masterGain.connect(audioCtx.destination);
 
   cello = new SampleVoice(audioCtx, { pan: VOICE_CONFIG.cello.pan, referenceFreq: REFERENCE_FREQ.cello, trimDb: TRIM_DB.cello });
@@ -878,15 +999,45 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
     if (customSessionStartMs === 0) customSessionStartMs = nowMs;
 
     const gain = customSmoothedLevel * config.maxGain;
-    if (atRest ? gain !== lastSent.gain : Math.abs(gain - lastSent.gain) > GAIN_EPSILON) {
-      const gainRampSec = customGainLastPushMs ? (nowMs - customGainLastPushMs) / 1000 : CUSTOM_RAMP_FALLBACK_SEC;
+    if (atRest) {
+      // ELEVENTH follow-up: reported bug — after a long/intense tremor,
+      // sound could still be heard at what the UI already showed as 0
+      // intensity. Cause: this branch used to call the ordinary
+      // voice.setGain(0, rampSec) here, exactly like any other push. But
+      // setGain() just anchors-and-ramps — it does NOT cancel any
+      // already-scheduled FUTURE ramp (Web Audio automation events are
+      // time-ordered, not call-ordered, and cancelScheduledValues() is
+      // unsafe in this library; see the SIGSEGV note near the top of this
+      // file). The longer/more intense the preceding tremor, the more
+      // likely an earlier gain push scheduled a ramp whose end time lands
+      // AFTER this rest-triggered push's own end time — that stale ramp
+      // still fires later and pulls gain back up, reviving audible sound.
+      // This is the exact same mechanism as the EIGHTH follow-up's
+      // "sound continues after End Session" bug, just reached via this
+      // rest-detection path instead of stopHard(). stopHard() already
+      // carries the fix (the STALE_RAMP_GUARD_SEC backstop) — reuse it
+      // here rather than a plain setGain() call, so reaching true rest
+      // gets the same protection as ending a session does.
+      if (gain !== lastSent.gain) {
+        if (SONIFICATION_DEBUG_LOGGING) console.log('[sonification:rest]', 'at=' + nowMs, 'pendingGainRampSec=' + (voice.gainRampEndTime - voice.ctx.currentTime).toFixed(2));
+        voice.stopHard(voice.ctx.currentTime);
+        lastSent.gain = gain;
+        customGainLastPushMs = nowMs;
+        customGainPushCount += 1; // see the counters' comment above
+      }
+    } else if (Math.abs(gain - lastSent.gain) > GAIN_EPSILON) {
+      const gainRampSec = customRampSec(nowMs, customGainLastPushMs);
       voice.setGain(gain, gainRampSec);
+      // FOURTEENTH follow-up diagnostic: gapSec is the raw time since the
+      // previous gain push (what the ramp used to be); rampSec is the capped
+      // value actually scheduled — rampSec should never exceed CUSTOM_RAMP_MAX_SEC.
+      if (SONIFICATION_DEBUG_LOGGING) console.log('[sonification:gainpush]', 'at=' + nowMs, 'target=' + gain.toFixed(3), 'gapSec=' + (customGainLastPushMs ? ((nowMs - customGainLastPushMs) / 1000).toFixed(2) : 'first'), 'rampSec=' + gainRampSec.toFixed(2));
       lastSent.gain = gain;
       customGainLastPushMs = nowMs;
       customGainPushCount += 1; // see the counters' comment above
     }
     if (atRest ? customSmoothedLevel !== lastSent.bright : Math.abs(customSmoothedLevel - lastSent.bright) > BRIGHT_EPSILON) {
-      const brightRampSec = customBrightLastPushMs ? (nowMs - customBrightLastPushMs) / 1000 : CUSTOM_RAMP_FALLBACK_SEC;
+      const brightRampSec = customRampSec(nowMs, customBrightLastPushMs);
       voice.setBrightness(customSmoothedLevel, brightRampSec);
       lastSent.bright = customSmoothedLevel;
       customBrightLastPushMs = nowMs;
@@ -902,7 +1053,7 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
     // about different things.)
     const freq = config.minFreq * Math.pow(config.maxFreq / config.minFreq, customSmoothedLevel);
     if (Math.abs(freq - lastSent.freq) > FREQ_EPSILON) {
-      const freqRampSec = customFreqLastPushMs ? (nowMs - customFreqLastPushMs) / 1000 : CUSTOM_RAMP_FALLBACK_SEC;
+      const freqRampSec = customRampSec(nowMs, customFreqLastPushMs);
       voice.setFrequency(freq, freqRampSec);
       lastSent.freq = freq;
       customFreqLastPushMs = nowMs;
@@ -918,7 +1069,12 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
     // degrades), that rules it out.
     if (SONIFICATION_DEBUG_LOGGING) {
       const elapsedSec = customSessionStartMs ? ((nowMs - customSessionStartMs) / 1000).toFixed(1) : '0.0';
-      console.log('[sonification:custom]', 'elapsedSec=' + elapsedSec, 'gainPush=' + customGainPushCount, 'brightPush=' + customBrightPushCount, 'freqPush=' + customFreqPushCount, 'level=' + level.toFixed(1), 'smoothedLevel=' + (customSmoothedLevel * 100).toFixed(1), 'gain=' + gain.toFixed(3), 'freq=' + freq.toFixed(1));
+      // ELEVENTH follow-up: absolute 'at' timestamp added so this can be
+      // cross-referenced against liveSession.js's '[sonification:hook]'
+      // SET/CLEARED log lines (also absolute Date.now()) — lets a single
+      // capture show exactly when the last real push happened relative to
+      // End Session's setAudioHook(null) call.
+      console.log('[sonification:custom]', 'at=' + nowMs, 'elapsedSec=' + elapsedSec, 'gainPush=' + customGainPushCount, 'brightPush=' + customBrightPushCount, 'freqPush=' + customFreqPushCount, 'level=' + level.toFixed(1), 'smoothedLevel=' + (customSmoothedLevel * 100).toFixed(1), 'gain=' + gain.toFixed(3), 'freq=' + freq.toFixed(1));
     }
     return; // skip the generic/FFT-based path below entirely
   }
@@ -930,8 +1086,39 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
   // 300ms gate, which produced a perceptible ~3.3Hz "snap, then hold"
   // stepping in volume — inaudible under a sample's own timbral motion.
   // Decoupling them removes that stepping for these three voices.
+  //
+  // TWELFTH follow-up: reported bug — sound still audible at true rest
+  // (Intensity reading of 0) on Viola. The comment just above this block
+  // used to claim these three voices were already immune to the ELEVENTH
+  // follow-up's "stuck at rest" class of bug because "gain is exactly 0
+  // on the very next packet, no lag" — true of the COMMAND (normLevel
+  // really does hit exact integer 0 at rest; see rmsToLevel()'s noise
+  // floor in dsp.js, confirmed, not a residual-sensor-noise issue), but
+  // not of the resulting SOUND. voice.setGain() (SampleVoice, above)
+  // issues that 0 target via setTargetAtTime() — an open-ended
+  // exponential approach, not a discrete jump — so "exactly 0, no lag"
+  // described the target, not the actual audio, which only ever decays
+  // toward silence on an 0.08s time constant and mathematically never
+  // reaches it. After a sustained/intense tremor that tail starts from a
+  // larger gain value, so it takes longer to decay below audibility —
+  // read by ear as "still hearing sound right after Intensity hits 0."
+  // This is a different mechanism from the ELEVENTH follow-up's stale-
+  // scheduled-ramp revival (these voices never schedule a future ramp
+  // end event the way SineVoice's setGain() does), so stopHard()'s
+  // STALE_RAMP_GUARD_SEC backstop isn't what's needed here — just a hard
+  // discrete snap to 0 instead of an asymptotic approach, exactly what
+  // SampleVoice.stopHard() already does (reused as-is from the EIGHTH
+  // follow-up/session-end path; see its comment above). Gated on
+  // normLevel === 0 specifically (true rest), not gain <= some epsilon,
+  // so the three voices' normal unsmoothed/fully-responsive gain path
+  // during genuine active motion is untouched.
   const gain = normLevel * config.maxGain;
-  if (Math.abs(gain - lastSent.gain) > GAIN_EPSILON) {
+  if (normLevel === 0) {
+    if (lastSent.gain !== 0) {
+      voice.stopHard(voice.ctx.currentTime);
+      lastSent.gain = 0;
+    }
+  } else if (Math.abs(gain - lastSent.gain) > GAIN_EPSILON) {
     voice.setGain(gain);
     lastSent.gain = gain;
   }
@@ -995,11 +1182,45 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
 
 export function silenceAudio() {
   if (!audioCtx) return;
+  // ELEVENTH follow-up: logged unconditionally (called at most a few
+  // times per session) with an absolute timestamp, cross-referenced
+  // against '[sonification:custom]' and '[sonification:hook]' lines —
+  // see their comments.
   const t = audioCtx.currentTime;
+  // THIRTEENTH follow-up: pendingGainRampSec > 0 means a Custom gain ramp
+  // scheduled before this call is still in flight and will pull gain back
+  // up from 0 until it ends — the predicted length of any post-stop sound.
+  console.log('[sonification:silence]', 'silenceAudio() called at', Date.now(), 'pendingGainRampSec=' + (custom ? (custom.gainRampEndTime - t).toFixed(2) : 'n/a'));
   cello?.stopHard(t);
   viola?.stopHard(t);
   violin?.stopHard(t);
   custom?.stopHard(t);
+  // THIRTEENTH follow-up: reported bug — Custom sometimes kept playing a
+  // single frozen tone after End Session, indefinitely, until navigating
+  // past Summary to Home. Two on-device captures (one that stopped
+  // cleanly, one that didn't) showed IDENTICAL JS-level state at the
+  // moment of this call in both cases: in both, the gain automation had
+  // already settled (no pending future ramp — gainPush hadn't
+  // incremented in several real seconds, so stopHard()'s STALE_RAMP_GUARD_SEC
+  // backstop correctly saw nothing to guard against either way) before
+  // this function ran its per-voice stopHard() calls above. Since the two
+  // runs are indistinguishable at this level yet produced different
+  // outcomes, the failure isn't in this module's scheduling logic — it's
+  // react-native-audio-api (already the source of one confirmed bug in
+  // this file, the cancelScheduledValues() SIGSEGV noted near the top)
+  // occasionally not applying a settled AudioParam's setValueAtTime(0, t)
+  // to the native render graph.
+  //
+  // Fix: don't rely solely on each voice's own per-param automation.
+  // masterGain sits downstream of all four voices, right before
+  // destination, and until now its gain has only ever been assigned once
+  // at construction (0.93) — never scheduled/automated. Muting it here
+  // with a plain synchronous value write (not a scheduled automation
+  // event) goes through a simpler native code path than the per-voice
+  // setValueAtTime() calls above, independent of whatever is occasionally
+  // dropping those. It's unmuted again at the start of the next session
+  // (see unmuteAudio(), called from sessionLogic.js's startSession()).
+  if (masterGain) masterGain.gain.value = 0; // reversed by unmuteAudio() below
   lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
   lastFreqComputeTime = 0;
   cachedMappedFreq = null;

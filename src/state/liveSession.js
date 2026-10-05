@@ -144,7 +144,17 @@ export function getTremorBand() {
 // Registered by the Recording screen when audio feedback is enabled —
 // mirrors the original's `if(audioEnabled()&&screen==='active') updateAudio(...)`
 // inline call inside pushPacket().
+//
+// ELEVENTH follow-up: logged unconditionally (this is called at most a
+// few times per session, not per-packet, so it's cheap) with an absolute
+// timestamp — investigating a reported "sonification continues after End
+// Session" recurrence on Custom. Lets a device log show exactly when the
+// hook was set/cleared relative to sessionLogic.js's endSession() call and
+// the last packet that actually reached updateAudio(), to catch either an
+// unexpected re-registration after End Session, or a packet that slipped
+// through right around the null-out.
 export function setAudioHook(fn) {
+  console.log('[sonification:hook]', 'setAudioHook', fn ? 'SET' : 'CLEARED', 'at', Date.now());
   audioHook = fn;
 }
 

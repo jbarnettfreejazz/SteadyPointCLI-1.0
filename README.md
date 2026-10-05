@@ -1708,6 +1708,174 @@ stopped.
 Pending on-device confirmation: tremor, let intensity settle back to a
 displayed 0, and confirm no audible tone remains.
 
+## Tenth follow-up — buzzing root-caused to the shared BiquadFilter node
+
+Reported after the Eighth/Ninth follow-ups shipped: Custom's sine tone
+sounded buzzy rather than clean, described as "two tonal ranges at once"
+and, by a tester, like "a neighbor's lawn mower."
+
+Investigation ruled out, in order, with real device tests at each step
+(no theory was acted on without one):
+
+1. **Device speaker distortion** — ruled out; persisted on headphones.
+2. **A fixed low absolute-Hz band** — ruled out; raising the Custom
+   range's floor from 200Hz to 400Hz didn't move or remove it.
+3. **Quiet-signal/epsilon-coupling** (gain and pitch both driven off the
+   same smoothed intensity value in Custom, so the low end of the pitch
+   range is also the quietest) — ruled out; buzzing was present at
+   moderate-to-high intensity too, not just near the quiet floor.
+4. **Relative position in the configured range** — ruled out; it still
+   buzzed throughout a 400-700Hz range just as it had at 200-700Hz.
+5. **Retargeting-rate/scheduling artifacts** (the actual mechanism behind
+   every previous follow-up in this investigation) — ruled out
+   definitively by a real device log: the buzz was present even during a
+   fully static ~8-second hold with zero AudioParam automation events
+   firing (frequency and gain both pinned, nothing being retargeted at
+   all). A dead-steady oscillator has no "update rate" to blame.
+6. **Custom/oscillator-specific** — ruled out; confirmed present on Cello
+   too (a sample-based voice, not an oscillator), just "more integrated"
+   into its own sample texture and therefore less noticeable — the same
+   "a bare sine exposes everything a sample's texture would mask" theme
+   that's recurred throughout this file, just for a different underlying
+   defect than any previous round.
+
+That left only what `SineVoice` and `SampleVoice` actually share: the
+`BiquadFilter -> GainNode -> StereoPannerNode -> masterGain -> destination`
+chain and the underlying `AudioContext`. A bisection test with temporary
+`BYPASS_FILTER`/`BYPASS_PANNER` toggles (construction-time wiring, routing
+around one node or the other) isolated it on the first try:
+`BYPASS_FILTER=true` — skipping the `BiquadFilterNode` entirely — made the
+buzzing disappear completely, confirmed across thorough on-device testing
+of both Cello and Custom.
+
+**Root cause**: `react-native-audio-api`'s `BiquadFilterNode`, in this
+app's lowpass configuration (cutoff swept 800-3600Hz, `Q=1.0`), introduces
+audible buzzing/distortion into whatever signal passes through it — not
+specific to Custom, not specific to a sine wave, not related to this
+app's own scheduling/throttling code at all. No matching report was found
+on the library's open GitHub issues as of this writing.
+
+**Decision**: ship with `BYPASS_FILTER=true` — the filter stays
+completely out of the signal path on both `SampleVoice` and `SineVoice`.
+Clean tone takes priority over the brightness feature for now; brightness
+is paused, not removed, until the filter question (fix its configuration,
+replace it, or deliver brightness a different way) is revisited. Despite
+the flag's name, this is the deliberate current shipping configuration,
+not a temporary diagnostic state.
+
+Two things surfaced during this round's thorough testing, logged here and
+deliberately deferred rather than chased immediately:
+
+1. A periodic/intermittent pulsation on Cello specifically (not present
+   on Custom) with the filter bypassed. Possibly the long-standing,
+   deliberately-unsmoothed Cello gain path (see the THIRD follow-up)
+   being slightly more exposed now that the filter isn't incidentally
+   softening transients — unconfirmed.
+2. An intermittent recurrence of sonification continuing to play after
+   End Session, in some case separate from the Eighth follow-up's fix
+   (which was specific to Custom/`SineVoice`'s stale linear ramps) — no
+   repro captured yet.
+
+## Eleventh follow-up — sound lingering at true rest after intense tremor (fixed); End Session recurrence (logging added)
+
+Picking up the two items the Tenth follow-up deferred, now that the
+filter question has a shipping decision. Confirmed Custom-only for both.
+
+**Issue A — sound still audible at true rest (displayed Intensity 0)
+after tremoring intensely for 10-15 seconds, fixed**: the Ninth
+follow-up's rest-detection fix pushed `setGain(0, rampSec)` the same way
+as any other gain push — but that's an ordinary scheduling call, and it
+does not cancel an already-scheduled *future* ramp (Web Audio automation
+events are time-ordered, not call-ordered; `cancelScheduledValues()` is
+unsafe in this library — see the SIGSEGV note near the top of this
+file). The longer/more intense the preceding tremor, the more likely an
+earlier gain push had scheduled a ramp ending *after* the moment rest
+was reached — exactly the same mechanism as the Eighth follow-up's
+"sound continues after End Session" bug, just reached through this
+rest-detection path instead of `stopHard()`. Since `stopHard()` already
+carries the fix for this (the Eighth follow-up's `STALE_RAMP_GUARD_SEC`
+backstop), the rest-detection branch now calls `voice.stopHard()` instead
+of a plain `setGain()` call, giving it the same protection ending a
+session already had.
+
+**Issue B — End Session reliability, Custom-only, inconsistent duration
+(immediate / a few seconds / until Return to Home / past Home)**:
+suspected to be a related but distinct manifestation — most likely a
+BLE packet reaching `updateAudio()` in a timing-dependent window around
+teardown — but not yet confirmed against a real device log, so no fix
+yet. Re-enabled `SONIFICATION_DEBUG_LOGGING`, and added two new
+always-on (not gated behind that flag, since they fire only a few times
+per session) absolute-timestamp logs: `[sonification:hook]` in
+`liveSession.js`'s `setAudioHook()` (SET/CLEARED), and
+`[sonification:silence]` in `silenceAudio()`. Cross-referencing these
+against the existing per-push `[sonification:custom]` log (now also
+carrying an absolute `at=` timestamp) should show whether a packet
+reaches `updateAudio()` after `setAudioHook(null)` runs — a hook
+re-registration or a late-packet race — once a real capture is in hand.
+
+## Thirteenth follow-up — masterGain mute backstop at End Session
+
+`silenceAudio()` now also sets `masterGain.gain.value = 0` with a plain
+value write (no scheduled automation), and `unmuteAudio()` restores it
+(`MASTER_GAIN_LEVEL`, 0.93) from `sessionLogic.js`'s `startSession()`.
+Confirmed on-device: sound stopped immediately at End Session on both a
+Quick Start (Reading) session and a Continuous session. Kept as a
+permanent backstop — nothing can be audible between sessions regardless
+of per-voice automation state.
+
+## Fourteenth follow-up — Custom ramp lengths capped (root cause of lingering sound)
+
+**Root cause**: the Seventh follow-up sized each Custom linear ramp to
+the real time since that parameter's previous push. That gap has no
+upper bound. `GAIN_EPSILON` (0.03) against Custom's 0-0.25 gain range
+allows only ~8 steps across the whole range, so gain pushes stop
+entirely during any steady stretch — and the next push after a hold got
+a ramp as long as the hold. Diagnostic logging
+(`[sonification:gainpush] rampSec=`) on a real Continuous session
+showed 22 of 73 gain pushes with ramps over 1s, up to 9.36s.
+
+Consequences: volume responding seconds late after a steady stretch;
+and, because `stopHard()` can't cancel an in-flight ramp
+(`cancelScheduledValues()` is unsafe — SIGSEGV note), a long ramp still
+in flight climbs back up from 0 until its original end time. That is the
+likely single mechanism behind both sound at displayed Intensity 0 and
+the variable-length post-End-Session sound (immediate / seconds / until
+Home — duration tracks how long the hold before the last gain change
+was). The Eighth/Eleventh follow-ups' `STALE_RAMP_GUARD_SEC` backstop
+only ends the resurgence at the ramp's end; it never prevented it.
+
+**Fix**: `CUSTOM_RAMP_MAX_SEC = 0.3` caps every Custom ramp (gain,
+frequency, brightness) via a shared `customRampSec()` helper. 0.3s
+because the same log shows push gaps during genuine active change are
+mostly 0.12-0.36s, so seamless ramp chaining during motion is preserved
+(no "ramp, then hold" stepping), while post-hold lag and any stale-ramp
+resurgence are bounded to 0.3s. The Thirteenth follow-up's masterGain
+mute stays as a backstop.
+
+Diagnostics still on (`SONIFICATION_DEBUG_LOGGING = true`):
+`[sonification:gainpush]` now logs both `gapSec` (raw time since the
+previous push) and `rampSec` (capped value actually scheduled);
+`[sonification:silence]` and `[sonification:rest]` log
+`pendingGainRampSec` (seconds of the last ramp still in flight — should
+now never exceed 0.3).
+
+## Fifteenth follow-up — in-session sonification toggle stayed silent after OFF -> ON
+
+Regression from the Thirteenth follow-up. The Recording screen's
+sonification `Switch` changes `config.feedbackType`, which re-runs
+RecordingScreen's audio effect: OFF runs its cleanup (`silenceAudio()`,
+which now also hard-mutes `masterGain`); ON re-registers the audio hook.
+But `masterGain` was only ever unmuted by `startSession()`, so after one
+OFF the hook was live while the master bus stayed at 0 — silent for the
+rest of the session.
+
+Fix: the effect now calls `audioService.unmuteAudio()` alongside
+`initAudio()`. It is also guarded on `getLiveState().isRecording`, so a
+`feedbackType` change while RecordingScreen sits mounted under Summary
+can never re-register the hook or unmute after End Session (on first
+mount, `startSession()` has already set `isRecording` via
+`beginSessionBuffers()` before navigating to Recording).
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

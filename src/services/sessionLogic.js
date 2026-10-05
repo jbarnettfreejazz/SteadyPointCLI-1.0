@@ -3,7 +3,7 @@ import { rmsOf, rmsToLevel } from '../utils/dsp';
 import * as live from '../state/liveSession';
 import { sendCommand } from './ble';
 import { persistSave } from './persistence';
-import { silenceAudio, setActiveVoice, setCustomTonalRange } from './audio';
+import { silenceAudio, setActiveVoice, setCustomTonalRange, unmuteAudio } from './audio';
 import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
 import { downsampleTrace } from '../utils/sessionStats';
@@ -228,6 +228,12 @@ export function startSession({ state, actions, navigation, overrides }) {
   // cheap/harmless to always set — mirrors setFullScaleG()/setTremorBand()'s
   // "fixed for the whole session" treatment.
   setCustomTonalRange(effective.settings?.customTonalRangeMinHz, effective.settings?.customTonalRangeMaxHz);
+  // THIRTEENTH follow-up: undo the previous session's endSession()
+  // muting masterGain (see silenceAudio()/unmuteAudio() in audio.js) —
+  // the AudioContext/voice graph persists across sessions, so without
+  // this a session after the first would stay silent at the master bus
+  // regardless of any individual voice's gain.
+  unmuteAudio();
 
   live.beginSessionBuffers();
   sendCommand('START');

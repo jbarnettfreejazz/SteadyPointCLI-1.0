@@ -7,7 +7,7 @@ import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
 import { orbSize, orbRGB, fmt } from '../utils/dsp';
 import { endSession } from '../services/sessionLogic';
-import { setAudioHook } from '../state/liveSession';
+import { setAudioHook, getLiveState } from '../state/liveSession';
 import * as audioService from '../services/audio';
 import { playGuideTrack, stopGuideTrack } from '../services/guideTrackPlayer';
 import Sparkline from '../components/Sparkline';
@@ -43,9 +43,22 @@ export default function RecordingScreen() {
   // rebuilding a fresh native AudioContext back-to-back was unreliable on
   // this library's current version (session 2 audio would silently fail).
   // Building the graph once and just muting/unmuting it via gain sidesteps both.
+  //
+  // FIFTEENTH follow-up: this effect also re-runs whenever the in-session
+  // sonification toggle flips (audioEnabled is its dependency). Toggling
+  // OFF runs the cleanup below -> silenceAudio(), which since the
+  // THIRTEENTH follow-up also hard-mutes masterGain — but that mute was
+  // only ever undone by startSession(), so toggling back ON re-registered
+  // the hook while masterGain stayed at 0: silent for the rest of the
+  // session. Fix: unmuteAudio() here too. Guarded on isRecording so this
+  // can never re-enable audio after End Session (RecordingScreen stays
+  // mounted under Summary) — on first mount startSession() has already
+  // set isRecording via beginSessionBuffers() before navigating here.
   useEffect(() => {
     if (!audioEnabled) return undefined;
+    if (!getLiveState().isRecording) return undefined;
     audioService.initAudio(); // idempotent — no-ops if already built
+    audioService.unmuteAudio();
     setAudioHook((rx, ry, rz, level, sr, freqWin) => audioService.updateAudio(rx, ry, rz, level, sr, freqWin));
     return () => {
       audioService.silenceAudio();
