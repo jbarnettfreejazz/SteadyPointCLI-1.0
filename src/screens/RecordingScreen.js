@@ -59,6 +59,7 @@ export default function RecordingScreen() {
     if (!getLiveState().isRecording) return undefined;
     audioService.initAudio(); // idempotent — no-ops if already built
     audioService.unmuteAudio();
+    audioService.resumeAudio(); // EIGHTEENTH follow-up: un-pause the engine silenceAudio() suspended
     setAudioHook((rx, ry, rz, level, sr, freqWin) => audioService.updateAudio(rx, ry, rz, level, sr, freqWin));
     return () => {
       audioService.silenceAudio();

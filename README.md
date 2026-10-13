@@ -1876,6 +1876,85 @@ can never re-register the hook or unmute after End Session (on first
 mount, `startSession()` has already set `isRecording` via
 `beginSessionBuffers()` before navigating to Recording).
 
+## Sixteenth follow-up — session "paused" while another app was open (step 1 of 2)
+
+**Cause**: `Info.plist` declared no `UIBackgroundModes`, so iOS
+suspended the app a few seconds after it left the foreground — all JS
+stopped: BLE notifications weren't processed (gap in the recording), and
+the session clock, which incremented `elapsed` by 1 per `setInterval`
+tick, silently lost every second it didn't fire, resuming from where it
+stopped. Same mechanism `useKeepAwake()` addressed for auto-lock, which
+can't help once the user switches apps.
+
+**Fix (step 1)**:
+- `UIBackgroundModes` = `bluetooth-central` — iOS keeps delivering the
+  M5Stick's BLE notifications in the background and wakes the app to
+  handle them, so packets keep flowing into `pushPacket()` and the
+  session buffer. (Appropriate for a BLE-sensor app; native rebuild
+  required.)
+- `liveSession.js`'s `startTimers()` now derives `elapsed` from the wall
+  clock (time since session start), clamped to `totalSeconds` for timed
+  sessions — any timer gap catches up on the next tick, and a timed
+  session whose end passed in the background completes on that tick.
+
+**Not yet covered (step 2)**: sonification and guide tracks in the
+background — needs the `audio` background mode plus a Playback audio
+session, and a decision on mixing with other apps' audio (relevant to the
+planned Spotify session type). Background delivery is also best-effort:
+iOS may batch notifications or terminate the app under memory pressure.
+
+## Seventeenth follow-up — "Maximum update depth exceeded" while backgrounded
+
+Side effect of the Sixteenth follow-up. `liveSession.js`'s `notify()`
+fired synchronously on every BLE packet (~50/sec), and each one forces a
+synchronous React render through `useSyncExternalStore`. Now that
+packets keep arriving in the background, iOS throttles React's scheduled
+passive-effect work while these forced renders kept coming — React
+logged "Maximum update depth exceeded". Confirmed only ever logged while
+backgrounded.
+
+Fix: `notify()` now (1) does nothing while `AppState` isn't `active`,
+flushing once immediately on return to the foreground, and (2) coalesces
+foreground notifications to at most one per `NOTIFY_INTERVAL_MS` (33ms,
+~30 renders/sec — already anticipated by the "throttle this" note in
+`pushPacket()`). Only UI notification changed: buffers, recording,
+metrics, the audio hook and the session clock still run on every
+packet/tick, and `getLiveState()` always returns current state
+(Calibration's sample polling reads it directly, so it's unaffected).
+
+## Eighteenth follow-up — sonification in the background (step 2 of 2)
+
+- `Info.plist` `UIBackgroundModes` now also includes `audio`.
+  react-native-audio-api 0.4.18 already sets `AVAudioSession` to
+  Playback (Bluetooth/AirPlay options, no mix-with-others) on start and
+  resume — verified in its `ios/audioapi/ios/core/AudioPlayer.m` — and
+  `guideTrackPlayer.js` already uses `Sound.setCategory('Playback')`, so
+  no category change was needed. Native rebuild required.
+- **Engine suspended between sessions**: the single AudioContext lives for
+  the app's lifetime, and a running AVAudioEngine counts as "playing" to
+  iOS even when silent — with the `audio` mode that would keep the app
+  alive in the background indefinitely after its first sonification
+  session (battery; App Store guideline 2.5.4). `silenceAudio()` (End
+  Session, toggle OFF) now calls `AudioContext.suspend()`;
+  RecordingScreen's audio effect calls the new `resumeAudio()` alongside
+  `unmuteAudio()`. Suspend/resume, not close/rebuild — the graph stays
+  intact. Native suspend/resume each run on a detached thread, so calls
+  are serialized through a promise queue (`queueEngineOp`) to keep a fast
+  OFF->ON toggle from executing out of order; `updateAudio()`'s existing
+  resume-if-suspended line is now only a fallback, skipped while our own
+  ops are pending. Kill switch: `SUSPEND_ENGINE_WHEN_SILENT` in audio.js.
+  New log lines: `[sonification:engine] suspend/resume at <ms>`.
+
+**Known limitations (not addressed)**:
+- The library registers no `AVAudioSession` interruption handling, so
+  after a phone call/Siri/alarm interrupts a session, sonification may not
+  come back until the next session (or a toggle OFF->ON).
+- Playback without mix-with-others means starting sonification pauses
+  other apps' audio (e.g. Spotify/podcasts). The library re-applies its
+  category options on every resume, so changing this needs a
+  patch-package change to the library — relevant to the planned Spotify
+  session type.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

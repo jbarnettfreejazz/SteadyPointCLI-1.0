@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import {
   rmsOf,
   std,
@@ -158,9 +159,41 @@ export function setAudioHook(fn) {
   audioHook = fn;
 }
 
-function notify() {
+// SEVENTEENTH follow-up: listener notifications (i.e. Recording-screen
+// re-renders via useSyncExternalStore) are now coalesced and skipped
+// while the app isn't in the foreground. Previously every pushPacket()
+// notified synchronously — ~50 forced synchronous React renders/sec.
+// Since the SIXTEENTH follow-up's bluetooth-central background mode, BLE
+// packets keep arriving while the app is backgrounded, where iOS throttles
+// React's scheduled (passive-effect) work but not these forced renders —
+// they piled up until React logged "Maximum update depth exceeded"
+// (confirmed: only ever logged while backgrounded).
+//
+// Only UI notification changes here. All data work — buffers, session
+// recording, metrics, the audio hook, the session clock — still runs on
+// every packet/tick exactly as before; getLiveState() always returns the
+// live, current state for direct readers. On returning to the foreground
+// one notification is flushed immediately so the screen catches up.
+const NOTIFY_INTERVAL_MS = 33; // ~30 renders/sec — plenty for the waveform/orb
+let notifyTimer = null;
+let appActive = AppState.currentState == null || AppState.currentState === 'active';
+
+function flushNotify() {
+  notifyTimer = null;
   state = { ...state };
   for (const l of listeners) l(state);
+}
+
+AppState.addEventListener('change', (next) => {
+  const wasActive = appActive;
+  appActive = next === 'active';
+  if (appActive && !wasActive) flushNotify();
+});
+
+function notify() {
+  if (!appActive) return; // nothing visible to render — see comment above
+  if (notifyTimer) return; // a flush is already scheduled; it'll pick this change up
+  notifyTimer = setTimeout(flushNotify, NOTIFY_INTERVAL_MS);
 }
 
 export function subscribeLive(listener) {
@@ -367,10 +400,22 @@ function updateLiveMetrics() {
   notify();
 }
 
+// SIXTEENTH follow-up: elapsed is now derived from the wall clock (time
+// since this session's start) instead of incrementing by 1 on each
+// interval tick. iOS throttles or suspends JS timers while the app is in
+// the background, so a tick-counted clock silently lost every second it
+// didn't fire — sessions appeared to "pause" while another app was open
+// and came back with a shorter duration than real time. With the clock-
+// based value, the next tick after any gap catches up immediately, and a
+// timed session whose end passed while backgrounded completes on that
+// first tick (clamped to totalSeconds so the recorded duration never
+// overshoots the configured length).
 export function startTimers({ onElapsedTick, onComplete, totalSeconds } = {}) {
   stopTimers();
+  const startedAtMs = Date.now() - state.elapsed * 1000;
   timers.elapsedInterval = setInterval(() => {
-    state.elapsed += 1;
+    const wallSec = Math.floor((Date.now() - startedAtMs) / 1000);
+    state.elapsed = totalSeconds ? Math.min(wallSec, totalSeconds) : wallSec;
     notify();
     onElapsedTick?.(state.elapsed);
     if (totalSeconds && state.elapsed >= totalSeconds) {

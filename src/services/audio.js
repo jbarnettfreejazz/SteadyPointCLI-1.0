@@ -183,7 +183,7 @@ const DUAL_LAYER_ENABLED = false;
 // runs (a hook re-registration or a late-arriving-packet race) or
 // whether the EIGHTH follow-up's existing stopHard() guard is simply
 // being outrun by a ramp scheduled after silenceAudio() already ran.
-const SONIFICATION_DEBUG_LOGGING = true;
+const SONIFICATION_DEBUG_LOGGING = false;
 
 // TENTH follow-up, continued: the debug-log capture showed buzzing present
 // even during several seconds of a completely static hold (fixed
@@ -568,6 +568,68 @@ export function unmuteAudio() {
   if (masterGain) masterGain.gain.value = MASTER_GAIN_LEVEL;
 }
 
+// EIGHTEENTH follow-up: background audio. Info.plist now declares the
+// `audio` UIBackgroundModes entry, so sonification keeps playing when the
+// app is backgrounded mid-session (react-native-audio-api 0.4.18 already
+// configures AVAudioSession as Playback on start/resume — checked in its
+// ios/audioapi/ios/core/AudioPlayer.m — so no category change is needed).
+//
+// But this module deliberately keeps one AudioContext alive for the app's
+// whole lifetime (see RecordingScreen.js), and a running AVAudioEngine
+// counts as "playing audio" to iOS even when it's rendering pure silence —
+// with the `audio` background mode, that alone would keep the app alive in
+// the background indefinitely after its first sonification session,
+// draining battery and contrary to App Store guideline 2.5.4. So the
+// engine is now paused (AudioContext.suspend()) whenever sonification is
+// silenced — End Session, or the in-session toggle turned OFF — and
+// resumed when it's enabled again. This is suspend/resume, NOT close/
+// rebuild (the latter is the thing found unreliable on this library
+// before): the graph, sources, and oscillator all stay intact.
+//
+// Native suspend()/resume() each run on their own detached std::thread
+// (see AudioContextHostObject.h), so two calls issued close together (a
+// quick OFF->ON toggle) could otherwise execute out of order and leave the
+// engine paused while sonification is supposedly on. engineQueue chains
+// them so each runs only after the previous one has completed.
+//
+// Kill switch: if suspend/resume misbehaves on-device (e.g. no sound in
+// a second session, or a crash on session start), set this to false — the
+// engine then stays running as before, and the only cost is the
+// battery/backgrounding concern above.
+const SUSPEND_ENGINE_WHEN_SILENT = true;
+let engineSuspended = false; // our own intent, not the native state
+let engineOpsInFlight = 0;
+let engineQueue = Promise.resolve();
+
+function queueEngineOp(label, op) {
+  engineOpsInFlight += 1;
+  engineQueue = engineQueue
+    .then(op)
+    .catch((e) => console.warn(`[sonification:engine] ${label} failed:`, e?.message))
+    .finally(() => {
+      engineOpsInFlight -= 1;
+    });
+}
+
+function suspendEngine() {
+  if (!SUSPEND_ENGINE_WHEN_SILENT || !audioCtx || engineSuspended) return;
+  engineSuspended = true;
+  const ctx = audioCtx;
+  console.log('[sonification:engine]', 'suspend at', Date.now());
+  queueEngineOp('suspend', () => ctx.suspend());
+}
+
+// Called by RecordingScreen whenever sonification becomes active for a
+// recording session (session start with sound on, or the toggle turned
+// ON) — alongside unmuteAudio().
+export function resumeAudio() {
+  if (!audioCtx || !engineSuspended) return;
+  engineSuspended = false;
+  const ctx = audioCtx;
+  console.log('[sonification:engine]', 'resume at', Date.now());
+  queueEngineOp('resume', () => ctx.resume());
+}
+
 // Called once at startSession() time (see sessionLogic.js) with the user's
 // persisted Settings > Sonification > Tonal Range > Custom values, mirroring
 // setActiveVoice()/setFullScaleG()'s "fixed for the session" pattern. Falls
@@ -905,7 +967,14 @@ export function initAudio() {
 export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin) {
   const voice = activeVoice();
   if (!voice || !voice.ready) return; // still loading samples
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  // EIGHTEENTH follow-up: only a fallback for a suspension we didn't
+  // request (e.g. iOS pausing the engine) — never while our own
+  // suspend/resume is queued or in flight, which would race it (see
+  // queueEngineOp above). Routed through the same queue.
+  if (!engineSuspended && engineOpsInFlight === 0 && audioCtx.state === 'suspended') {
+    const ctx = audioCtx;
+    queueEngineOp('resume (fallback)', () => ctx.resume());
+  }
 
   const config = VOICE_CONFIG[activeVoiceName];
   const level = Math.max(0, Math.min(100, tremorLevel || 0));
@@ -1234,6 +1303,11 @@ export function silenceAudio() {
   customBrightPushCount = 0;
   customFreqPushCount = 0;
   customSessionStartMs = 0;
+  // EIGHTEENTH follow-up: pause the engine so iOS doesn't keep the app
+  // alive in the background rendering silence — see suspendEngine().
+  // Queued after the gain writes above, so the voices are already
+  // silenced/muted when rendering stops (and when it later resumes).
+  suspendEngine();
 }
 
 // Buffer sources are one-shot per the Web Audio spec — once stopped they
@@ -1255,4 +1329,5 @@ export function destroyAudio() {
   audioCtx = null;
   masterGain = null;
   cello = viola = violin = custom = null;
+  engineSuspended = false; // EIGHTEENTH follow-up: next initAudio() starts a fresh, running context
 }
