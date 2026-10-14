@@ -129,6 +129,12 @@ export async function persistLoad() {
           hasCalibrated: loadedSettings.hasCalibrated ?? true,
         }
       : null;
+    // TWENTY-SECOND follow-up: 'cello_a' ("Cello A (test)") became the
+    // regular Cello and 'cello_b' ("Cello B (test)") was removed — map
+    // either saved choice to 'cello'.
+    if (settings && (settings.sonificationVoice === 'cello_a' || settings.sonificationVoice === 'cello_b')) {
+      settings.sonificationVoice = 'cello';
+    }
 
     return {
       pinnedSessions,

@@ -7,26 +7,54 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		001B95E2657A4953B4BE1922 /* violin.wav in Resources */ = {isa = PBXBuildFile; fileRef = 448FB23E739A4EB6B18BEDA5 /* violin.wav */; };
 		00E356F31AD99517003FC87E /* SteadyPointCLITests.m in Sources */ = {isa = PBXBuildFile; fileRef = 00E356F21AD99517003FC87E /* SteadyPointCLITests.m */; };
 		0C80B921A6F3F58F76C31292 /* libPods-SteadyPointCLI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-SteadyPointCLI.a */; };
 		0D465A4489C441DCB30B7F83 /* cello.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4956867A9ED24F0D85891A9E /* cello.wav */; };
 		13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */ = {isa = PBXBuildFile; fileRef = 13B07FB01A68108700A75B9A /* AppDelegate.mm */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		13B07FC11A68108700A75B9A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 13B07FB71A68108700A75B9A /* main.m */; };
+		16FF7ADFC9CF466C8B065839 /* violin_g5.wav in Resources */ = {isa = PBXBuildFile; fileRef = AC3BD8A8C2E74E62BE20CE14 /* violin_g5.wav */; };
+		1B96371D6F704A22801E8B6E /* cello_f5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 64E505F369E740A5A0450064 /* cello_f5.wav */; };
+		221008768D1749DB888668E1 /* violin_c5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 49FB3CC217E0402DA2AD129E /* violin_c5.wav */; };
+		22EABC0D83704A5EB1BBACEF /* viola_d4.wav in Resources */ = {isa = PBXBuildFile; fileRef = 2F71AFA8728245D89821CA9C /* viola_d4.wav */; };
 		23ED318093FF4BCFAC10D237 /* cello.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4956867A9ED24F0D85891A9E /* cello.wav */; };
+		254D370639664B26A8CD59EA /* viola_b5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8DBEF6F5E3194FCD8CD28C36 /* viola_b5.wav */; };
+		2D265BF20135471D99FB1CD4 /* viola_a4.wav in Resources */ = {isa = PBXBuildFile; fileRef = 367A5D45D28748B8BC4CD482 /* viola_a4.wav */; };
+		2EA9EBE2945E4B488C532031 /* violin_c4.wav in Resources */ = {isa = PBXBuildFile; fileRef = A0F9FE5C2D7A4FE7BA40539C /* violin_c4.wav */; };
 		30376EED624E412C90372725 /* viola.wav in Resources */ = {isa = PBXBuildFile; fileRef = D5EFE5A7F4714551A3A7120E /* viola.wav */; };
-		433C74A761284E26A82CE8DF /* violin.wav in Resources */ = {isa = PBXBuildFile; fileRef = 448FB23E739A4EB6B18BEDA5 /* violin.wav */; };
-		59A866F238824FAB828744E7 /* cello_loud.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8C03E66ACBAF4ABC9E57C2BB /* cello_loud.wav */; };
+		31571AB07640B1291573380E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = FE6934B2F53A271DF616C4BD /* PrivacyInfo.xcprivacy */; };
+		3F0F1BE338184D9AAABC6004 /* viola_c3.wav in Resources */ = {isa = PBXBuildFile; fileRef = CB2F323ED24D48B9AB2DE8A6 /* viola_c3.wav */; };
+		457CEC5520804DE4A4A7E219 /* violin_c4.wav in Resources */ = {isa = PBXBuildFile; fileRef = A0F9FE5C2D7A4FE7BA40539C /* violin_c4.wav */; };
+		4BA4EBDCB33942249CE8A623 /* violin_g6.wav in Resources */ = {isa = PBXBuildFile; fileRef = 0B388E7A575549E8AF900DFD /* violin_g6.wav */; };
+		4D49F3BA4AC1400EA733CD6C /* violin_g6.wav in Resources */ = {isa = PBXBuildFile; fileRef = 0B388E7A575549E8AF900DFD /* violin_g6.wav */; };
+		539114C3458645369AA6DE68 /* cello_g2.wav in Resources */ = {isa = PBXBuildFile; fileRef = BA9308A2A7254D6ABD3EBF6E /* cello_g2.wav */; };
+		561F8D54A009417D8EF86A8E /* violin_c6.wav in Resources */ = {isa = PBXBuildFile; fileRef = 665657F860D945D3BD260A40 /* violin_c6.wav */; };
+		5648C5C5B0B4485C8821FE4D /* cello_f5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 64E505F369E740A5A0450064 /* cello_f5.wav */; };
+		6390B7A037A646A88B1252E3 /* viola_e5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1DFCF96A3CEF45DFA7F39639 /* viola_e5.wav */; };
+		6A870B6AE0D840ED975F0CE3 /* viola_c3.wav in Resources */ = {isa = PBXBuildFile; fileRef = CB2F323ED24D48B9AB2DE8A6 /* viola_c3.wav */; };
+		6D1CCB0BC1A64D398650509C /* violin_g4.wav in Resources */ = {isa = PBXBuildFile; fileRef = A76C1DF7409F4EA5A3C57D76 /* violin_g4.wav */; };
+		74378AB33DE149E2A8129660 /* cello_e4.wav in Resources */ = {isa = PBXBuildFile; fileRef = B3E949195ED548BAB20468E6 /* cello_e4.wav */; };
 		7699B88040F8A987B510C191 /* libPods-SteadyPointCLI-SteadyPointCLITests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 19F6CBCC0A4E27FBF8BF4A61 /* libPods-SteadyPointCLI-SteadyPointCLITests.a */; };
+		7D51223F7A8642A5A152D26D /* cello_a3.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7E49909918714176A504CA13 /* cello_a3.wav */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		8EA20FCD483346BA8CD9B3BB /* violin_g4.wav in Resources */ = {isa = PBXBuildFile; fileRef = A76C1DF7409F4EA5A3C57D76 /* violin_g4.wav */; };
+		8FA7BE40F7614E3286D8F77F /* cello_d3.wav in Resources */ = {isa = PBXBuildFile; fileRef = 3AAE88907E624A66AEEBBCC2 /* cello_d3.wav */; };
 		8FCA87E1689D4A51B23C28E6 /* viola.wav in Resources */ = {isa = PBXBuildFile; fileRef = D5EFE5A7F4714551A3A7120E /* viola.wav */; };
-		8FECBE74D8F547C4B7A16143 /* viola_loud.wav in Resources */ = {isa = PBXBuildFile; fileRef = 13AC868E25CD4DFD89014CF0 /* viola_loud.wav */; };
-		AB0932E010B148F81338DF53 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 3408A25092548EF3E2B329EE /* PrivacyInfo.xcprivacy */; };
-		B3E6FBA38B1144BC96B4200E /* violin_loud.wav in Resources */ = {isa = PBXBuildFile; fileRef = E0B69A93454A4598B52C825E /* violin_loud.wav */; };
-		B7848AEA8ECE41E79FC2FE6D /* viola_loud.wav in Resources */ = {isa = PBXBuildFile; fileRef = 13AC868E25CD4DFD89014CF0 /* viola_loud.wav */; };
-		BCA156B8C83D429999C374F7 /* violin_loud.wav in Resources */ = {isa = PBXBuildFile; fileRef = E0B69A93454A4598B52C825E /* violin_loud.wav */; };
-		F466B32D274542D9BE6E9A36 /* cello_loud.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8C03E66ACBAF4ABC9E57C2BB /* cello_loud.wav */; };
+		9183D3CF6E964173ADCB06C4 /* violin_g3.wav in Resources */ = {isa = PBXBuildFile; fileRef = E9CD255056FC44A6BE2ECD0B /* violin_g3.wav */; };
+		921D9AE7864C4ED29B33EDA4 /* violin_g3.wav in Resources */ = {isa = PBXBuildFile; fileRef = E9CD255056FC44A6BE2ECD0B /* violin_g3.wav */; };
+		9310E68655564D4486246C77 /* violin_g5.wav in Resources */ = {isa = PBXBuildFile; fileRef = AC3BD8A8C2E74E62BE20CE14 /* violin_g5.wav */; };
+		93E8B7085166459BB3652D28 /* viola_a4.wav in Resources */ = {isa = PBXBuildFile; fileRef = 367A5D45D28748B8BC4CD482 /* viola_a4.wav */; };
+		A6A79545C98145FFABF6EA0E /* cello_g2.wav in Resources */ = {isa = PBXBuildFile; fileRef = BA9308A2A7254D6ABD3EBF6E /* cello_g2.wav */; };
+		B2D9B9D3263742E0920C97B5 /* cello_b4.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4F4FB7B25F2D46F6A6DEC9D0 /* cello_b4.wav */; };
+		BDEB4008FDDD490ABC637D19 /* viola_d4.wav in Resources */ = {isa = PBXBuildFile; fileRef = 2F71AFA8728245D89821CA9C /* viola_d4.wav */; };
+		C8F6104F5FDA4365AB5556BA /* cello_a3.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7E49909918714176A504CA13 /* cello_a3.wav */; };
+		CB03749FF1C241EAB277E253 /* viola_e5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1DFCF96A3CEF45DFA7F39639 /* viola_e5.wav */; };
+		CBA2E9DA89BC409B805AF240 /* violin_c6.wav in Resources */ = {isa = PBXBuildFile; fileRef = 665657F860D945D3BD260A40 /* violin_c6.wav */; };
+		CED0803C05784CFA8DD3DA05 /* viola_b5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8DBEF6F5E3194FCD8CD28C36 /* viola_b5.wav */; };
+		DBCF5A9BCA634ED5831C47B2 /* cello_b4.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4F4FB7B25F2D46F6A6DEC9D0 /* cello_b4.wav */; };
+		DEF31AF191E349F38A3C2BFC /* cello_d3.wav in Resources */ = {isa = PBXBuildFile; fileRef = 3AAE88907E624A66AEEBBCC2 /* cello_d3.wav */; };
+		FB2FAFCC3F9A49919CEB7E15 /* violin_c5.wav in Resources */ = {isa = PBXBuildFile; fileRef = 49FB3CC217E0402DA2AD129E /* violin_c5.wav */; };
+		FB7A9CFC4BB84CEA8EF8911A /* cello_e4.wav in Resources */ = {isa = PBXBuildFile; fileRef = B3E949195ED548BAB20468E6 /* cello_e4.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -43,7 +71,7 @@
 		00E356EE1AD99517003FC87E /* SteadyPointCLITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SteadyPointCLITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		00E356F11AD99517003FC87E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		00E356F21AD99517003FC87E /* SteadyPointCLITests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SteadyPointCLITests.m; sourceTree = "<group>"; };
-		13AC868E25CD4DFD89014CF0 /* viola_loud.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = viola_loud.wav; path = ../src/assets/audio/viola_loud.wav; sourceTree = "<group>"; };
+		0B388E7A575549E8AF900DFD /* violin_g6.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_g6.wav; path = ../src/assets/audio/violin_g6.wav; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* SteadyPointCLI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SteadyPointCLI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FAF1A68108700A75B9A /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AppDelegate.h; path = SteadyPointCLI/AppDelegate.h; sourceTree = "<group>"; };
 		13B07FB01A68108700A75B9A /* AppDelegate.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = AppDelegate.mm; path = SteadyPointCLI/AppDelegate.mm; sourceTree = "<group>"; };
@@ -52,19 +80,33 @@
 		13B07FB71A68108700A75B9A /* main.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = main.m; path = SteadyPointCLI/main.m; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = SteadyPointCLI/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		19F6CBCC0A4E27FBF8BF4A61 /* libPods-SteadyPointCLI-SteadyPointCLITests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-SteadyPointCLI-SteadyPointCLITests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3408A25092548EF3E2B329EE /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = SteadyPointCLI/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		1DFCF96A3CEF45DFA7F39639 /* viola_e5.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = viola_e5.wav; path = ../src/assets/audio/viola_e5.wav; sourceTree = "<group>"; };
+		2F71AFA8728245D89821CA9C /* viola_d4.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = viola_d4.wav; path = ../src/assets/audio/viola_d4.wav; sourceTree = "<group>"; };
+		367A5D45D28748B8BC4CD482 /* viola_a4.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = viola_a4.wav; path = ../src/assets/audio/viola_a4.wav; sourceTree = "<group>"; };
+		3AAE88907E624A66AEEBBCC2 /* cello_d3.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello_d3.wav; path = ../src/assets/audio/cello_d3.wav; sourceTree = "<group>"; };
 		3B4392A12AC88292D35C810B /* Pods-SteadyPointCLI.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SteadyPointCLI.debug.xcconfig"; path = "Target Support Files/Pods-SteadyPointCLI/Pods-SteadyPointCLI.debug.xcconfig"; sourceTree = "<group>"; };
-		448FB23E739A4EB6B18BEDA5 /* violin.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin.wav; path = ../src/assets/audio/violin.wav; sourceTree = "<group>"; };
 		4956867A9ED24F0D85891A9E /* cello.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello.wav; path = ../src/assets/audio/cello.wav; sourceTree = "<group>"; };
+		49FB3CC217E0402DA2AD129E /* violin_c5.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_c5.wav; path = ../src/assets/audio/violin_c5.wav; sourceTree = "<group>"; };
+		4F4FB7B25F2D46F6A6DEC9D0 /* cello_b4.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello_b4.wav; path = ../src/assets/audio/cello_b4.wav; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-SteadyPointCLI.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SteadyPointCLI.release.xcconfig"; path = "Target Support Files/Pods-SteadyPointCLI/Pods-SteadyPointCLI.release.xcconfig"; sourceTree = "<group>"; };
 		5B7EB9410499542E8C5724F5 /* Pods-SteadyPointCLI-SteadyPointCLITests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SteadyPointCLI-SteadyPointCLITests.debug.xcconfig"; path = "Target Support Files/Pods-SteadyPointCLI-SteadyPointCLITests/Pods-SteadyPointCLI-SteadyPointCLITests.debug.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-SteadyPointCLI.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-SteadyPointCLI.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		64E505F369E740A5A0450064 /* cello_f5.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello_f5.wav; path = ../src/assets/audio/cello_f5.wav; sourceTree = "<group>"; };
+		665657F860D945D3BD260A40 /* violin_c6.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_c6.wav; path = ../src/assets/audio/violin_c6.wav; sourceTree = "<group>"; };
+		7E49909918714176A504CA13 /* cello_a3.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello_a3.wav; path = ../src/assets/audio/cello_a3.wav; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = SteadyPointCLI/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		89C6BE57DB24E9ADA2F236DE /* Pods-SteadyPointCLI-SteadyPointCLITests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-SteadyPointCLI-SteadyPointCLITests.release.xcconfig"; path = "Target Support Files/Pods-SteadyPointCLI-SteadyPointCLITests/Pods-SteadyPointCLI-SteadyPointCLITests.release.xcconfig"; sourceTree = "<group>"; };
-		8C03E66ACBAF4ABC9E57C2BB /* cello_loud.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello_loud.wav; path = ../src/assets/audio/cello_loud.wav; sourceTree = "<group>"; };
+		8DBEF6F5E3194FCD8CD28C36 /* viola_b5.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = viola_b5.wav; path = ../src/assets/audio/viola_b5.wav; sourceTree = "<group>"; };
+		A0F9FE5C2D7A4FE7BA40539C /* violin_c4.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_c4.wav; path = ../src/assets/audio/violin_c4.wav; sourceTree = "<group>"; };
+		A76C1DF7409F4EA5A3C57D76 /* violin_g4.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_g4.wav; path = ../src/assets/audio/violin_g4.wav; sourceTree = "<group>"; };
+		AC3BD8A8C2E74E62BE20CE14 /* violin_g5.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_g5.wav; path = ../src/assets/audio/violin_g5.wav; sourceTree = "<group>"; };
+		B3E949195ED548BAB20468E6 /* cello_e4.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello_e4.wav; path = ../src/assets/audio/cello_e4.wav; sourceTree = "<group>"; };
+		BA9308A2A7254D6ABD3EBF6E /* cello_g2.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = cello_g2.wav; path = ../src/assets/audio/cello_g2.wav; sourceTree = "<group>"; };
+		CB2F323ED24D48B9AB2DE8A6 /* viola_c3.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = viola_c3.wav; path = ../src/assets/audio/viola_c3.wav; sourceTree = "<group>"; };
 		D5EFE5A7F4714551A3A7120E /* viola.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = viola.wav; path = ../src/assets/audio/viola.wav; sourceTree = "<group>"; };
-		E0B69A93454A4598B52C825E /* violin_loud.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_loud.wav; path = ../src/assets/audio/violin_loud.wav; sourceTree = "<group>"; };
+		E9CD255056FC44A6BE2ECD0B /* violin_g3.wav */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = violin_g3.wav; path = ../src/assets/audio/violin_g3.wav; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		FE6934B2F53A271DF616C4BD /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = SteadyPointCLI/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,12 +149,26 @@
 		0DE0EBF2909E42E3A40FD5F1 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				448FB23E739A4EB6B18BEDA5 /* violin.wav */,
 				D5EFE5A7F4714551A3A7120E /* viola.wav */,
 				4956867A9ED24F0D85891A9E /* cello.wav */,
-				E0B69A93454A4598B52C825E /* violin_loud.wav */,
-				13AC868E25CD4DFD89014CF0 /* viola_loud.wav */,
-				8C03E66ACBAF4ABC9E57C2BB /* cello_loud.wav */,
+				BA9308A2A7254D6ABD3EBF6E /* cello_g2.wav */,
+				7E49909918714176A504CA13 /* cello_a3.wav */,
+				3AAE88907E624A66AEEBBCC2 /* cello_d3.wav */,
+				B3E949195ED548BAB20468E6 /* cello_e4.wav */,
+				64E505F369E740A5A0450064 /* cello_f5.wav */,
+				4F4FB7B25F2D46F6A6DEC9D0 /* cello_b4.wav */,
+				0B388E7A575549E8AF900DFD /* violin_g6.wav */,
+				8DBEF6F5E3194FCD8CD28C36 /* viola_b5.wav */,
+				E9CD255056FC44A6BE2ECD0B /* violin_g3.wav */,
+				49FB3CC217E0402DA2AD129E /* violin_c5.wav */,
+				AC3BD8A8C2E74E62BE20CE14 /* violin_g5.wav */,
+				A0F9FE5C2D7A4FE7BA40539C /* violin_c4.wav */,
+				1DFCF96A3CEF45DFA7F39639 /* viola_e5.wav */,
+				665657F860D945D3BD260A40 /* violin_c6.wav */,
+				367A5D45D28748B8BC4CD482 /* viola_a4.wav */,
+				2F71AFA8728245D89821CA9C /* viola_d4.wav */,
+				A76C1DF7409F4EA5A3C57D76 /* violin_g4.wav */,
+				CB2F323ED24D48B9AB2DE8A6 /* viola_c3.wav */,
 			);
 			name = Resources;
 			sourceTree = "<group>";
@@ -127,7 +183,7 @@
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB71A68108700A75B9A /* main.m */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
-				3408A25092548EF3E2B329EE /* PrivacyInfo.xcprivacy */,
+				FE6934B2F53A271DF616C4BD /* PrivacyInfo.xcprivacy */,
 			);
 			name = SteadyPointCLI;
 			sourceTree = "<group>";
@@ -271,12 +327,26 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				001B95E2657A4953B4BE1922 /* violin.wav in Resources */,
 				8FCA87E1689D4A51B23C28E6 /* viola.wav in Resources */,
 				23ED318093FF4BCFAC10D237 /* cello.wav in Resources */,
-				B3E6FBA38B1144BC96B4200E /* violin_loud.wav in Resources */,
-				8FECBE74D8F547C4B7A16143 /* viola_loud.wav in Resources */,
-				59A866F238824FAB828744E7 /* cello_loud.wav in Resources */,
+				539114C3458645369AA6DE68 /* cello_g2.wav in Resources */,
+				C8F6104F5FDA4365AB5556BA /* cello_a3.wav in Resources */,
+				8FA7BE40F7614E3286D8F77F /* cello_d3.wav in Resources */,
+				FB7A9CFC4BB84CEA8EF8911A /* cello_e4.wav in Resources */,
+				5648C5C5B0B4485C8821FE4D /* cello_f5.wav in Resources */,
+				DBCF5A9BCA634ED5831C47B2 /* cello_b4.wav in Resources */,
+				4D49F3BA4AC1400EA733CD6C /* violin_g6.wav in Resources */,
+				CED0803C05784CFA8DD3DA05 /* viola_b5.wav in Resources */,
+				921D9AE7864C4ED29B33EDA4 /* violin_g3.wav in Resources */,
+				221008768D1749DB888668E1 /* violin_c5.wav in Resources */,
+				9310E68655564D4486246C77 /* violin_g5.wav in Resources */,
+				2EA9EBE2945E4B488C532031 /* violin_c4.wav in Resources */,
+				CB03749FF1C241EAB277E253 /* viola_e5.wav in Resources */,
+				CBA2E9DA89BC409B805AF240 /* violin_c6.wav in Resources */,
+				93E8B7085166459BB3652D28 /* viola_a4.wav in Resources */,
+				22EABC0D83704A5EB1BBACEF /* viola_d4.wav in Resources */,
+				8EA20FCD483346BA8CD9B3BB /* violin_g4.wav in Resources */,
+				3F0F1BE338184D9AAABC6004 /* viola_c3.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -286,13 +356,27 @@
 			files = (
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
-				433C74A761284E26A82CE8DF /* violin.wav in Resources */,
 				30376EED624E412C90372725 /* viola.wav in Resources */,
 				0D465A4489C441DCB30B7F83 /* cello.wav in Resources */,
-				BCA156B8C83D429999C374F7 /* violin_loud.wav in Resources */,
-				B7848AEA8ECE41E79FC2FE6D /* viola_loud.wav in Resources */,
-				F466B32D274542D9BE6E9A36 /* cello_loud.wav in Resources */,
-				AB0932E010B148F81338DF53 /* PrivacyInfo.xcprivacy in Resources */,
+				A6A79545C98145FFABF6EA0E /* cello_g2.wav in Resources */,
+				7D51223F7A8642A5A152D26D /* cello_a3.wav in Resources */,
+				DEF31AF191E349F38A3C2BFC /* cello_d3.wav in Resources */,
+				74378AB33DE149E2A8129660 /* cello_e4.wav in Resources */,
+				1B96371D6F704A22801E8B6E /* cello_f5.wav in Resources */,
+				B2D9B9D3263742E0920C97B5 /* cello_b4.wav in Resources */,
+				4BA4EBDCB33942249CE8A623 /* violin_g6.wav in Resources */,
+				254D370639664B26A8CD59EA /* viola_b5.wav in Resources */,
+				9183D3CF6E964173ADCB06C4 /* violin_g3.wav in Resources */,
+				FB2FAFCC3F9A49919CEB7E15 /* violin_c5.wav in Resources */,
+				16FF7ADFC9CF466C8B065839 /* violin_g5.wav in Resources */,
+				457CEC5520804DE4A4A7E219 /* violin_c4.wav in Resources */,
+				6390B7A037A646A88B1252E3 /* viola_e5.wav in Resources */,
+				561F8D54A009417D8EF86A8E /* violin_c6.wav in Resources */,
+				2D265BF20135471D99FB1CD4 /* viola_a4.wav in Resources */,
+				BDEB4008FDDD490ABC637D19 /* viola_d4.wav in Resources */,
+				6D1CCB0BC1A64D398650509C /* violin_g4.wav in Resources */,
+				6A870B6AE0D840ED975F0CE3 /* viola_c3.wav in Resources */,
+				31571AB07640B1291573380E /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -534,7 +618,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_EXPLICIT_MODULES = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = 6N4P2VVN25;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = SteadyPointCLI/Info.plist;
@@ -563,7 +647,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_EXPLICIT_MODULES = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 22;
 				DEVELOPMENT_TEAM = 6N4P2VVN25;
 				INFOPLIST_FILE = SteadyPointCLI/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

@@ -1,7 +1,6 @@
 import { AudioContext } from 'react-native-audio-api';
 import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
-import { combinedDominantFreq, mapRange } from '../utils/dsp';
 
 // ══════════════════════════════════════════════════════
 // AUDIO SONIFICATION — SINGLE COMBINED VOICE
@@ -84,27 +83,10 @@ import { combinedDominantFreq, mapRange } from '../utils/dsp';
 // all") is already the existing visual-only feedback-type toggle.
 // ══════════════════════════════════════════════════════
 
-const ASSET_FILES = {
-  cello: 'cello.wav',
-  cello_loud: 'cello_loud.wav',
-  viola: 'viola.wav',
-  viola_loud: 'viola_loud.wav',
-  violin: 'violin.wav',
-  violin_loud: 'violin_loud.wav',
-};
-
-// Best-guess reference pitch of each bundled sample (see AUDIO_SOURCES.md
-// for the note-naming-convention caveat carried over from the 3-voice
-// engine). Soft and loud layers are the same physical note, so they
-// share one reference.
-const REFERENCE_FREQ = {
-  cello: 65.41, // labeled "C1" — assumed standard C2
-  viola: 196.0, // labeled "G2" — assumed standard G3
-  violin: 440.0, // labeled "A4" — assumed standard A4 (Solo Violin subset, may use standard notation)
-};
-
-// Per-voice input trim, compensating for each source recording's own
-// measured peak level (checked directly, not assumed). Measured peaks:
+// Per-instrument base trim (TWENTY-SECOND follow-up: now the base for each
+// instrument's zone trims — see ZonedSampleVoice), originally compensating
+// for each source recording's own measured peak level (checked directly,
+// not assumed). Measured peaks:
 // cello -15.4 dBFS, viola -21.7 dBFS, violin -20.5 dBFS; target -4 dBFS.
 const TRIM_DB = {
   cello: 11.4,
@@ -112,42 +94,117 @@ const TRIM_DB = {
   violin: 16.5,
 };
 
-// Each instrument's own natural register — both the target range its
-// pitch is mapped into, and its output volume ceiling. Reused unchanged
-// from the old per-axis 3-voice engine.
+// Each voice's pitch range (intensity 0 -> minFreq, 100 -> maxFreq,
+// exponential/octave-space mapping) and output volume ceiling.
 //
-// "custom" is NOT a recorded sample at all — per tester feedback asking
-// for a cleaner/more precise tone than a pitch-shifted instrument sample,
-// it's a pure sine-wave oscillator (see SineVoice below) at the user's own
-// chosen pan/gain, mapping the combined dominant frequency into a
-// user-defined minFreq/maxFreq range. minFreq/maxFreq here are just the
-// startup defaults (200-700Hz, per the product spec); setCustomTonalRange()
-// below overwrites them from the user's persisted Settings choice at
-// session start.
+// TWENTY-SECOND follow-up: Cello/Viola/Violin are multi-sampled
+// ZonedSampleVoices driven by the smooth pipeline (pitch follows
+// INTENSITY, like Custom), each spanning its instrument's sampled range:
+//   cello  65-1000Hz (C2 up; promoted from the Twenty-first follow-up's
+//          "Cello A (test)", which replaced the original single-sample
+//          Cello; "Cello B (test)" was removed)
+//   viola  131-1175Hz (C3-D6, the full VSCO Viola Section range)
+//   violin 196-1568Hz (G3-G6; the C7 sample exists but 2kHz+ is shrill
+//          for continuous sonification)
+// pan/maxGain are unchanged from the original instruments.
+//
+// "custom" is NOT a recorded sample — a pure sine-wave oscillator (see
+// SineVoice below). minFreq/maxFreq here are just the startup defaults
+// (200-700Hz, per the product spec); setCustomTonalRange() overwrites them
+// from the user's persisted Settings choice at session start.
 const VOICE_CONFIG = {
-  cello: { pan: -0.45, minFreq: 65, maxFreq: 130, maxGain: 0.4 },
-  viola: { pan: 0, minFreq: 196, maxFreq: 330, maxGain: 0.25 },
-  violin: { pan: 0.45, minFreq: 392, maxFreq: 784, maxGain: 0.4 },
+  cello: { pan: -0.45, minFreq: 65, maxFreq: 1000, maxGain: 0.4 },
+  viola: { pan: 0, minFreq: 131, maxFreq: 1175, maxGain: 0.25 },
+  violin: { pan: 0.45, minFreq: 196, maxFreq: 1568, maxGain: 0.4 },
   custom: { pan: 0, minFreq: 200, maxFreq: 700, maxGain: 0.25 },
 };
 
-// Expected tremor/movement frequency range that combinedDominantFreq()
-// produces — mapped from here into whichever instrument is selected.
-const SOURCE_FREQ_MIN_HZ = 0.5;
-const SOURCE_FREQ_MAX_HZ = 20.0;
+// Voices that use the smoothed, intensity-driven, linear-ramp pipeline in
+// updateAudio() (originally Custom-only). Since the TWENTY-SECOND follow-up
+// that's every voice.
+const SMOOTH_PIPELINE_VOICES = new Set(['cello', 'viola', 'violin', 'custom']);
 
-function bundledAssetPath(name) {
-  const fileName = ASSET_FILES[name];
+// TWENTY-FIRST follow-up: multi-sampled cello (originally "Cello A"). The library's
+// pitch-shifter clamps `semitones` to -12..+12 (StretcherNode.cpp), so a
+// single recording can never span 65-1000Hz (~4 octaves). Instead, seven
+// VSCO 2 CE "Cello Section / susvib" notes (CC0 — see AUDIO_SOURCES.md),
+// one every perfect fifth, each pitch-shifted at most ~+/-3.5 semitones
+// (the top note up to ~+6 to reach 1000Hz).
+//
+// refHz and loopRmsDb were MEASURED, not assumed (YIN pitch tracking and
+// RMS over the 20%-80% loop region, mono mix). The library's labels are
+// consistently one octave low (file "C1" = C2 at 65.40Hz — confirming the
+// original engine's REFERENCE_FREQ assumption); every note is within 4 cents of
+// equal temperament. cello.wav is byte-identical to the C2 zone's source,
+// so it's reused rather than duplicated.
+//
+// Loudness: recordings differ by up to ~10dB, so each zone gets its own
+// trim that matches its loop RMS to cello.wav's (ZONE_LOUDNESS_REF_DB) on
+// top of the existing TRIM_DB.cello — Cello A stays at the level of the
+// original sample, and hand-offs don't jump in volume. Higher notes may
+// still sound louder on a phone speaker (better high-frequency response);
+// tune per-zone by ear if so.
+const CELLO_ZONES = [
+  { file: 'cello.wav', refHz: 65.4, loopRmsDb: -29.4 }, // C2 (VSCO "C1")
+  { file: 'cello_g2.wav', refHz: 97.98, loopRmsDb: -31.5 }, // G2 (VSCO "G1")
+  { file: 'cello_d3.wav', refHz: 146.84, loopRmsDb: -30.6 }, // D3 (VSCO "D2")
+  { file: 'cello_a3.wav', refHz: 219.91, loopRmsDb: -35.8 }, // A3 (VSCO "A2")
+  { file: 'cello_e4.wav', refHz: 329.43, loopRmsDb: -35.7 }, // E4 (VSCO "E3")
+  { file: 'cello_b4.wav', refHz: 493.87, loopRmsDb: -39.6 }, // B4 (VSCO "B3")
+  { file: 'cello_f5.wav', refHz: 699.14, loopRmsDb: -38.5 }, // F5 (VSCO "F4")
+];
+
+// TWENTY-SECOND follow-up: same approach for Viola and Violin, from the
+// same VSCO sets their original single samples came from (both CC0):
+//  - Viola Section / susvib (soft v1 layer): labels one octave low like the
+//    cello. Six notes a fifth apart, C3-B5; viola.wav (G3) is reused.
+//    Top note shifts up ~+3 semitones to reach D6/1175Hz.
+//  - Solo Violin / Arco Vib (soft "p" layer): labels match standard
+//    notation (the original violin.wav measured A4 = 440.18Hz). Seven
+//    notes G3-G6, alternating fourth/fifth steps (that set has G/A/C/E per
+//    octave, no D). The solo player's intonation varies a little (C4 is
+//    +21c, G6 +13c sharp) — irrelevant, since refHz is the MEASURED pitch.
+//    G3's fundamental is weak (-28dB, third harmonic strongest, normal for
+//    a violin's open G string); pitch verified at 195.5Hz from the
+//    harmonic series, since autocorrelation tracking locked onto h3.
+// Each instrument's zones are trimmed to match its ORIGINAL sample's loop
+// RMS (refRmsDb), so each instrument keeps the level it had before.
+const VIOLA_ZONES = [
+  { file: 'viola_c3.wav', refHz: 130.83, loopRmsDb: -41.2 }, // C3 (VSCO "C2")
+  { file: 'viola.wav', refHz: 196.07, loopRmsDb: -37.4 }, // G3 (VSCO "G2") — the original viola.wav
+  { file: 'viola_d4.wav', refHz: 293.75, loopRmsDb: -41.5 }, // D4 (VSCO "D3")
+  { file: 'viola_a4.wav', refHz: 440.06, loopRmsDb: -38.6 }, // A4 (VSCO "A3")
+  { file: 'viola_e5.wav', refHz: 659.54, loopRmsDb: -41.2 }, // E5 (VSCO "E4")
+  { file: 'viola_b5.wav', refHz: 989.03, loopRmsDb: -42.8 }, // B5 (VSCO "B4")
+];
+const VIOLIN_ZONES = [
+  { file: 'violin_g3.wav', refHz: 195.5, loopRmsDb: -37.1 }, // G3
+  { file: 'violin_c4.wav', refHz: 264.79, loopRmsDb: -33.1 }, // C4 (+21c)
+  { file: 'violin_g4.wav', refHz: 391.82, loopRmsDb: -42.3 }, // G4
+  { file: 'violin_c5.wav', refHz: 522.8, loopRmsDb: -29.4 }, // C5
+  { file: 'violin_g5.wav', refHz: 786.28, loopRmsDb: -39.7 }, // G5
+  { file: 'violin_c6.wav', refHz: 1043.09, loopRmsDb: -40.0 }, // C6
+  { file: 'violin_g6.wav', refHz: 1579.92, loopRmsDb: -44.3 }, // G6 (+13c)
+];
+// Loop RMS of each instrument's ORIGINAL single sample — the loudness
+// reference its zones are matched to (cello.wav / viola.wav / the removed
+// violin.wav, A4 Solo Violin p).
+const ZONE_LOUDNESS_REF_DB = { cello: -29.4, viola: -37.4, violin: -37.0 };
+// Hand-off crossfade between neighbouring zones. Both zones track pitch in
+// unison during the fade, so it's heard as a timbre blend, not a jump.
+const ZONE_XFADE_SEC = 0.3;
+// A neighbouring zone must be this many semitones closer than the current
+// one before switching — stops rapid back-and-forth hand-offs when pitch
+// hovers near the midpoint between two notes.
+const ZONE_HYSTERESIS_SEMITONES = 1.0;
+
+function bundledFilePath(fileName) {
   if (Platform.OS === 'ios') {
     return `${RNFS.MainBundlePath}/${fileName}`;
   }
   // Unverified — this project's real device testing has been iOS-only.
   return `file:///android_asset/custom/${fileName}`;
 }
-
-// See the detailed comment on loadPair() below for what this controls and
-// why it currently defaults to false.
-const DUAL_LAYER_ENABLED = false;
 
 // Flip to true to re-enable the [sonification] diagnostic console.log in
 // updateAudio() (sr/level/rawFreq/smoothedFreq/mappedFreq per update) —
@@ -226,175 +283,6 @@ const SONIFICATION_DEBUG_LOGGING = false;
 const BYPASS_FILTER = true;
 const BYPASS_PANNER = false;
 
-class SampleVoice {
-  constructor(ctx, { pan, referenceFreq, trimDb = 0 }) {
-    this.ctx = ctx;
-    this.referenceFreq = referenceFreq;
-    this.softReady = false;
-    this.loudReady = false;
-
-    this.pan = ctx.createStereoPanner();
-    this.pan.pan.value = pan;
-
-    this.output = ctx.createGain();
-    this.output.gain.value = 0;
-
-    // Lowpass filter kept for the same "brightness" expressive control as
-    // before, layered on top of whichever velocity blend is playing.
-    //
-    // TENTH follow-up: BYPASS_FILTER/BYPASS_PANNER (see their comment
-    // above) route around this node, or the StereoPannerNode below, for
-    // the shared-chain bisection test — the filter object still exists
-    // (setBrightness() below stays harmless) but isn't wired into the
-    // signal path when bypassed.
-    this.filter = ctx.createBiquadFilter();
-    this.filter.type = 'lowpass';
-    this.filter.frequency.value = 2400;
-    this.filter.Q.value = 1.0;
-    if (!BYPASS_FILTER) this.filter.connect(this.output);
-    if (!BYPASS_PANNER) this.output.connect(this.pan);
-
-    // Compensates for how quiet the source recording actually is (measured
-    // peak, not just assumed) — see TRIM_DB above.
-    this.trim = ctx.createGain();
-    this.trim.gain.value = Math.pow(10, trimDb / 20);
-    this.trim.connect(BYPASS_FILTER ? this.output : this.filter);
-
-    // Soft and loud velocity layers play simultaneously at all times, each
-    // through its own gain node — setIntensity() crossfades between them.
-    // Both feed into the shared trim/filter/output/pan stage above.
-    this.softGain = ctx.createGain();
-    this.softGain.gain.value = 1; // fully soft at rest
-    this.softGain.connect(this.trim);
-
-    this.loudGain = ctx.createGain();
-    this.loudGain.gain.value = 0; // silent until intensity rises
-    this.loudGain.connect(this.trim);
-  }
-
-  get ready() {
-    return this.softReady && this.loudReady;
-  }
-
-  connect(node) {
-    (BYPASS_PANNER ? this.output : this.pan).connect(node);
-  }
-
-  // Loads both velocity layers together and keeps them phase-locked — see
-  // git history for the fuller explanation (independent, unsynchronized
-  // loops produced an audible stutter when crossfading between them).
-  // DIAGNOSTIC: when DUAL_LAYER_ENABLED is false, only the soft layer
-  // loads/plays — confirmed via direct testing that running two
-  // simultaneous real-time pitch-shifters per voice was a genuine
-  // computational load ceiling on this device/library, not a tunable
-  // timing issue, so this stays off by default.
-  async loadPair(softPath, loudPath) {
-    if (!DUAL_LAYER_ENABLED) {
-      const softBuffer = await this.ctx.decodeAudioDataSource(softPath);
-      const loopStart = softBuffer.duration * 0.2;
-      const loopEnd = softBuffer.duration * 0.8;
-
-      this.softStretcher = this.ctx.createStretcher();
-      this.softSource = this.ctx.createBufferSource();
-      this.softSource.buffer = softBuffer;
-      this.softSource.loop = true;
-      this.softSource.loopStart = loopStart;
-      this.softSource.loopEnd = loopEnd;
-      this.softSource.connect(this.softStretcher);
-      this.softStretcher.connect(this.softGain);
-      this.softSource.start(this.ctx.currentTime);
-
-      this.softReady = true;
-      this.loudReady = true; // no loud layer to wait on — ready as soon as soft is
-      return;
-    }
-
-    const [softBuffer, loudBuffer] = await Promise.all([
-      this.ctx.decodeAudioDataSource(softPath),
-      this.ctx.decodeAudioDataSource(loudPath),
-    ]);
-
-    const shorterDuration = Math.min(softBuffer.duration, loudBuffer.duration);
-    const loopStart = shorterDuration * 0.2;
-    const loopEnd = shorterDuration * 0.8;
-
-    this.softStretcher = this.ctx.createStretcher();
-    this.softSource = this.ctx.createBufferSource();
-    this.softSource.buffer = softBuffer;
-    this.softSource.loop = true;
-    this.softSource.loopStart = loopStart;
-    this.softSource.loopEnd = loopEnd;
-    this.softSource.connect(this.softStretcher);
-    this.softStretcher.connect(this.softGain);
-
-    this.loudStretcher = this.ctx.createStretcher();
-    this.loudSource = this.ctx.createBufferSource();
-    this.loudSource.buffer = loudBuffer;
-    this.loudSource.loop = true;
-    this.loudSource.loopStart = loopStart;
-    this.loudSource.loopEnd = loopEnd;
-    this.loudSource.connect(this.loudStretcher);
-    this.loudStretcher.connect(this.loudGain);
-
-    const startAt = this.ctx.currentTime + 0.05;
-    this.softSource.start(startAt);
-    this.loudSource.start(startAt);
-
-    this.softReady = true;
-    this.loudReady = true;
-  }
-
-  setFrequency(freq) {
-    if (!this.ready) return;
-    const semitones = 12 * Math.log2(freq / this.referenceFreq);
-    const t = this.ctx.currentTime;
-    this.softStretcher.semitones.setTargetAtTime(semitones, t, FREQ_RAMP_TIME_CONSTANT);
-    if (DUAL_LAYER_ENABLED) this.loudStretcher.semitones.setTargetAtTime(semitones, t, FREQ_RAMP_TIME_CONSTANT);
-  }
-
-  setGain(level) {
-    if (!this.ready) return;
-    this.output.gain.setTargetAtTime(level, this.ctx.currentTime, 0.08);
-  }
-
-  // Crossfades between the soft and loud velocity-layer recordings — value
-  // in [0,1]. Equal-power crossfade (cos/sin) for a smoother perceptual
-  // blend than a straight linear fade.
-  setIntensity(value) {
-    if (!this.ready || !DUAL_LAYER_ENABLED) return;
-    const v = Math.max(0, Math.min(1, value));
-    const t = this.ctx.currentTime;
-    this.softGain.gain.setTargetAtTime(Math.cos((v * Math.PI) / 2), t, 0.25);
-    this.loudGain.gain.setTargetAtTime(Math.sin((v * Math.PI) / 2), t, 0.25);
-  }
-
-  setBrightness(value) {
-    if (!this.ready) return;
-    const v = Math.pow(Math.max(0, Math.min(1, value)), 0.7);
-    const cutoff = 800 + v * 2800;
-    this.filter.frequency.setTargetAtTime(cutoff, this.ctx.currentTime, 0.06);
-  }
-
-  // Hard cutoff to silence — cancels any in-flight ramp rather than fading,
-  // so a session end is immediately silent rather than tailing off.
-  stopHard(t) {
-    this.output.gain.setValueAtTime(0, t);
-  }
-
-  stopSource() {
-    try {
-      this.softSource?.stop();
-    } catch (e) {
-      // already stopped, or never started — fine to ignore
-    }
-    try {
-      this.loudSource?.stop();
-    } catch (e) {
-      // already stopped, or never started — fine to ignore
-    }
-  }
-}
-
 // Backs the "custom" voice — a pure sine-wave tone at the mapped tremor
 // frequency, with the same pan/filter/gain staging as SampleVoice above,
 // but no sample to load and no pitch-shifting: the oscillator's own
@@ -403,7 +291,7 @@ class SampleVoice {
 // so unlike SampleVoice (whose sample loading is async and gates `ready`),
 // this is constructed, started, and immediately ready, all synchronously.
 class SineVoice {
-  constructor(ctx, { pan, maxFreq }) {
+  constructor(ctx, { pan, maxFreq, harmonics = null }) {
     this.ctx = ctx;
 
     this.pan = ctx.createStereoPanner();
@@ -429,6 +317,14 @@ class SineVoice {
 
     this.osc = ctx.createOscillator();
     this.osc.type = 'sine';
+    // TWENTIETH follow-up: optional harmonic waveform (built for the since-
+    // removed "Cello B" prototype; currently unused, harmless) — same
+    // oscillator, same smooth control path, richer timbre. Imaginary
+    // (sine) coefficients carry the amplitudes; real (cosine) are zero.
+    if (harmonics) {
+      const real = harmonics.map(() => 0);
+      this.osc.setPeriodicWave(ctx.createPeriodicWave(real, harmonics.slice()));
+    }
     // Starting frequency doesn't matter — overwritten by the first real
     // setFrequency() call once a dominant frequency is detected. Seeded at
     // maxFreq's midpoint-ish rather than the Web Audio default (440Hz) just
@@ -542,6 +438,222 @@ class SineVoice {
   }
 }
 
+// TWENTY-FIRST follow-up: multi-sampled voice (Cello since the TWENTY-SECOND
+// follow-up, Viola and Violin too). Originally replaced the
+// Twentieth follow-up's SmoothSampleAdapter (single cello.wav, 65-130Hz) —
+// same interface and smooth-pipeline semantics as SineVoice (linear ramps
+// anchored at the current value over the caller's capped rampSec, stale-
+// ramp guard in stopHard()), but pitch is spread across CELLO_ZONES.
+//
+// Each zone is its own looping buffer source -> stretcher -> zone gain
+// (trim x crossfade). A zone's gain node is connected to the shared output
+// ONLY while that zone is in use: this library renders by pulling from the
+// destination (AudioNode::processAudio recurses through connected inputs),
+// so a disconnected zone's real-time pitch-shifter does no work. At most
+// two zones run at once (during a ZONE_XFADE_SEC hand-off). Running too
+// many simultaneous pitch-shifters has hit this device's CPU ceiling
+// before (see DUAL_LAYER_ENABLED).
+//
+// Pitch per zone: the stretcher's `semitones` param, ramped linearly
+// (= exponential in Hz, matching the smooth pipeline's octave-space
+// mapping), anchored at the zone's own last target. A zone that has just
+// been (re)connected jumps straight to its target pitch — inaudible, since
+// its crossfade gain starts from 0.
+class ZonedSampleVoice {
+  constructor(ctx, { pan, zones, baseTrimDb, refRmsDb }) {
+    this.ctx = ctx;
+    this.pan = ctx.createStereoPanner();
+    this.pan.pan.value = pan;
+    this.output = ctx.createGain();
+    this.output.gain.value = 0;
+    if (!BYPASS_PANNER) this.output.connect(this.pan);
+    this.zones = zones.map((z) => {
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      return {
+        ...z,
+        trim: Math.pow(10, (baseTrimDb + refRmsDb - z.loopRmsDb) / 20),
+        gain,
+        source: null,
+        stretcher: null,
+        connected: false,
+        lastSemitones: null,
+        disconnectTimer: null,
+      };
+    });
+    this.loaded = false;
+    this.activeIndex = -1;
+    this.gainRampEndTime = 0;
+    this.freqRampEndTime = 0;
+  }
+
+  get ready() {
+    return this.loaded;
+  }
+
+  connect(node) {
+    (BYPASS_PANNER ? this.output : this.pan).connect(node);
+  }
+
+  async load() {
+    const buffers = await Promise.all(this.zones.map((z) => this.ctx.decodeAudioDataSource(bundledFilePath(z.file))));
+    buffers.forEach((buffer, i) => {
+      const z = this.zones[i];
+      z.stretcher = this.ctx.createStretcher();
+      z.source = this.ctx.createBufferSource();
+      z.source.buffer = buffer;
+      z.source.loop = true;
+      z.source.loopStart = buffer.duration * 0.2; // same loop region as SampleVoice
+      z.source.loopEnd = buffer.duration * 0.8;
+      z.source.connect(z.stretcher);
+      z.stretcher.connect(z.gain);
+      // z.gain is deliberately NOT connected yet — see class comment.
+      z.source.start(this.ctx.currentTime);
+    });
+    this.loaded = true;
+  }
+
+  _semitonesFor(z, freq) {
+    return Math.max(-12, Math.min(12, 12 * Math.log2(freq / z.refHz)));
+  }
+
+  _nearestIndex(freq) {
+    let best = 0;
+    let bestDist = Infinity;
+    this.zones.forEach((z, i) => {
+      const d = Math.abs(Math.log2(freq / z.refHz));
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  _connectZone(z) {
+    if (z.disconnectTimer) {
+      clearTimeout(z.disconnectTimer);
+      z.disconnectTimer = null;
+    }
+    if (!z.connected) {
+      z.gain.connect(this.output);
+      z.connected = true;
+      z.lastSemitones = null; // stale — jump to target on next pitch push
+      return true;
+    }
+    return false;
+  }
+
+  _scheduleDisconnect(z) {
+    if (z.disconnectTimer) clearTimeout(z.disconnectTimer);
+    z.disconnectTimer = setTimeout(() => {
+      z.disconnectTimer = null;
+      if (z.connected && this.zones[this.activeIndex] !== z) {
+        z.gain.disconnect(this.output);
+        z.connected = false;
+      }
+    }, (ZONE_XFADE_SEC + 0.1) * 1000);
+  }
+
+  // Picks (and if needed crossfades to) the zone for `freq`.
+  _selectZone(freq, t) {
+    const best = this._nearestIndex(freq);
+    if (this.activeIndex < 0) {
+      const z = this.zones[best];
+      this._connectZone(z);
+      z.gain.gain.setValueAtTime(z.trim, t);
+      this.activeIndex = best;
+      return;
+    }
+    if (best === this.activeIndex) return;
+    const cur = this.zones[this.activeIndex];
+    const next = this.zones[best];
+    const distCur = Math.abs(12 * Math.log2(freq / cur.refHz));
+    const distNext = Math.abs(12 * Math.log2(freq / next.refHz));
+    if (distCur - distNext < ZONE_HYSTERESIS_SEMITONES) return;
+
+    const wasConnected = !this._connectZone(next);
+    next.gain.gain.setValueAtTime(wasConnected ? next.gain.gain.value : 0, t);
+    next.gain.gain.linearRampToValueAtTime(next.trim, t + ZONE_XFADE_SEC);
+    cur.gain.gain.setValueAtTime(cur.gain.gain.value, t);
+    cur.gain.gain.linearRampToValueAtTime(0, t + ZONE_XFADE_SEC);
+    this._scheduleDisconnect(cur);
+    this.activeIndex = best;
+    if (SONIFICATION_DEBUG_LOGGING) console.log('[sonification:zone]', cur.file, '->', next.file, 'at', freq.toFixed(1) + 'Hz');
+  }
+
+  setGain(level, rampSec) {
+    const g = this.output.gain;
+    const t = this.ctx.currentTime;
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(level, t + rampSec);
+    this.gainRampEndTime = t + rampSec;
+  }
+
+  setFrequency(freq, rampSec) {
+    const t = this.ctx.currentTime;
+    this._selectZone(freq, t);
+    for (const z of this.zones) {
+      if (!z.connected) continue;
+      const semis = this._semitonesFor(z, freq);
+      const p = z.stretcher.semitones;
+      p.setValueAtTime(z.lastSemitones ?? semis, t);
+      p.linearRampToValueAtTime(semis, t + rampSec);
+      z.lastSemitones = semis;
+    }
+    this.freqRampEndTime = t + rampSec;
+  }
+
+  setBrightness() {
+    // no-op — BYPASS_FILTER keeps the filter out of every chain
+  }
+
+  // Same guard as SineVoice.stopHard() (EIGHTH follow-up).
+  stopHard(t) {
+    const g = this.output.gain;
+    g.setValueAtTime(0, t);
+    if (this.gainRampEndTime > t) g.setValueAtTime(0, this.gainRampEndTime + STALE_RAMP_GUARD_SEC);
+    if (this.freqRampEndTime > t) {
+      for (const z of this.zones) {
+        if (z.connected && z.lastSemitones != null) {
+          z.stretcher.semitones.setValueAtTime(z.lastSemitones, this.freqRampEndTime + STALE_RAMP_GUARD_SEC);
+        }
+      }
+    }
+  }
+
+  stopSource() {
+    for (const z of this.zones) {
+      try {
+        z.source?.stop();
+      } catch (e) {
+        // already stopped, or never started — fine to ignore
+      }
+    }
+  }
+
+  // Session end / sonification toggled OFF (called from silenceAudio(),
+  // after stopHard() and the masterGain mute): disconnect every zone so no
+  // pitch-shifter keeps running between sessions; the next session starts
+  // fresh on whichever zone its first pitch selects.
+  release() {
+    const t = this.ctx.currentTime;
+    for (const z of this.zones) {
+      if (z.disconnectTimer) {
+        clearTimeout(z.disconnectTimer);
+        z.disconnectTimer = null;
+      }
+      z.gain.gain.setValueAtTime(0, t);
+      if (z.connected) {
+        z.gain.disconnect(this.output);
+        z.connected = false;
+      }
+      z.lastSemitones = null;
+    }
+    this.activeIndex = -1;
+  }
+}
+
 let audioCtx = null;
 let masterGain = null;
 let cello = null,
@@ -555,15 +667,12 @@ let cello = null,
 let activeVoiceName = 'cello';
 
 export function setActiveVoice(name) {
+  // TWENTY-SECOND follow-up: 'cello_a'/'cello_b' (Twentieth/Twenty-first
+  // follow-up prototypes) no longer exist — anything unknown falls back to
+  // 'cello' (also migrated in persistence.js).
   activeVoiceName = VOICE_CONFIG[name] ? name : 'cello';
 }
 
-// THIRTEENTH follow-up: undoes silenceAudio()'s masterGain mute. Called
-// once at the start of each new session (sessionLogic.js's startSession(),
-// alongside setActiveVoice()/setCustomTonalRange()) rather than inside
-// initAudio() itself, since initAudio() is a one-time, idempotent
-// construction no-op after the first session (see its own "if (audioCtx)
-// return" guard) and so wouldn't run again for session 2 onward.
 export function unmuteAudio() {
   if (masterGain) masterGain.gain.value = MASTER_GAIN_LEVEL;
 }
@@ -658,9 +767,13 @@ const STALE_RAMP_GUARD_SEC = 0.01;
 
 let lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
 const FREQ_EPSILON = 2; // Hz
+// TWENTIETH follow-up: pitch-relative push threshold for the non-Custom
+// smooth voices (see the pitchMoved check in updateAudio()). 0.1 semitone
+// is ~0.6% in frequency — below a noticeable step, comparable to what 2Hz
+// gives Custom across its own range.
+const PITCH_EPSILON_SEMITONES = 0.1;
 const GAIN_EPSILON = 0.03;
 const BRIGHT_EPSILON = 0.02;
-const INTENSITY_EPSILON = 0.04;
 
 // The FFT-based frequency recompute is meaningfully more CPU work than
 // this engine has done before at its per-packet (~50Hz) cadence — see
@@ -708,17 +821,11 @@ const INTENSITY_EPSILON = 0.04;
 // dominant tremor frequency" design below, unchanged — their sample
 // timbre already masks this fine, and there's no reason to touch a
 // design that isn't broken for them.
-const FREQ_RECOMPUTE_INTERVAL_MS = 300;
-let lastFreqComputeTime = 0;
-let cachedMappedFreq = null;
-
-// Time constant for setFrequency()'s setTargetAtTime() ramp on the
-// FFT-based path (SampleVoice's pitch-shifter — Cello/Viola/Violin only,
-// see the buzzy/pulsing fix note above). Deliberately close to
-// FREQ_RECOMPUTE_INTERVAL_MS itself, so pitch is still smoothly moving
-// (not sitting flat) right up until the next recompute, rather than
-// snapping to target early and holding.
-const FREQ_RAMP_TIME_CONSTANT = 0.25;
+//
+// TWENTY-SECOND follow-up: the FFT-based pitch path described above is
+// gone — every voice (Cello/Viola/Violin as multi-sampled ZonedSampleVoices,
+// Custom as SineVoice) now uses the smooth, intensity-driven pipeline in
+// updateAudio(). The history above is kept for context; see README.
 
 // CONFIRMED (follow-up, after the FFT-removal fix above): a ~1-2 second
 // periodic pulsation remained on Custom even with a stable, clean
@@ -889,31 +996,6 @@ let customSessionStartMs = 0;
 // Violin's pitch-shifter keeps its original setTargetAtTime() ramp,
 // unchanged, since nobody has reported this as a problem there.
 
-// Exponential smoothing of the raw combined-frequency estimate across
-// successive recomputes — specified in the reference implementation
-// (FREQ_SMOOTHING_ALPHA) but missed during the initial port. Confirmed
-// via real device logs to be a real gap: raw combinedFreq swung wildly
-// (e.g. 0.5Hz to 10Hz) between consecutive ~300ms samples during a
-// steady, metronome-guided shake test, with no temporal stability at
-// all. Lower alpha = more smoothing/slower to respond.
-const FREQ_SMOOTHING_ALPHA = 0.2;
-let smoothedFreq = null;
-
-// Confirmed via a motionless-device test: below this tremorLevel, the FFT
-// has no real signal to find and reports noise-driven peaks as if they
-// were a genuine frequency (readings of 10-20Hz+ with zero actual
-// movement). Roughly the low end of the "Mild" tremor band.
-const MIN_INTENSITY_FOR_FREQ = 8;
-
-// Confirmed via real device logs: below MIN_INTENSITY_FOR_FREQ, simply
-// freezing the pitch at its last value feels broken during a genuine
-// slow-down — the pitch appears to "get stuck" rather than descending,
-// even though intensity (and therefore volume) is clearly still fading.
-// Instead, ease the pitch down toward the bottom of the source range —
-// faster than the normal smoothing, so it settles within a couple of
-// seconds rather than lingering.
-const FREQ_DECAY_ALPHA = 0.25;
-
 export function isAudioInitialized() {
   return !!audioCtx;
 }
@@ -931,9 +1013,12 @@ export function initAudio() {
   masterGain.gain.value = MASTER_GAIN_LEVEL;
   masterGain.connect(audioCtx.destination);
 
-  cello = new SampleVoice(audioCtx, { pan: VOICE_CONFIG.cello.pan, referenceFreq: REFERENCE_FREQ.cello, trimDb: TRIM_DB.cello });
-  viola = new SampleVoice(audioCtx, { pan: VOICE_CONFIG.viola.pan, referenceFreq: REFERENCE_FREQ.viola, trimDb: TRIM_DB.viola });
-  violin = new SampleVoice(audioCtx, { pan: VOICE_CONFIG.violin.pan, referenceFreq: REFERENCE_FREQ.violin, trimDb: TRIM_DB.violin });
+  // TWENTY-SECOND follow-up: all three strings are multi-sampled
+  // ZonedSampleVoices. Each one's zones connect to its output only while
+  // in use (see ZonedSampleVoice), so an idle instrument does no work.
+  cello = new ZonedSampleVoice(audioCtx, { pan: VOICE_CONFIG.cello.pan, zones: CELLO_ZONES, baseTrimDb: TRIM_DB.cello, refRmsDb: ZONE_LOUDNESS_REF_DB.cello });
+  viola = new ZonedSampleVoice(audioCtx, { pan: VOICE_CONFIG.viola.pan, zones: VIOLA_ZONES, baseTrimDb: TRIM_DB.viola, refRmsDb: ZONE_LOUDNESS_REF_DB.viola });
+  violin = new ZonedSampleVoice(audioCtx, { pan: VOICE_CONFIG.violin.pan, zones: VIOLIN_ZONES, baseTrimDb: TRIM_DB.violin, refRmsDb: ZONE_LOUDNESS_REF_DB.violin });
   custom = new SineVoice(audioCtx, { pan: VOICE_CONFIG.custom.pan, maxFreq: VOICE_CONFIG.custom.maxFreq });
 
   cello.connect(masterGain);
@@ -941,15 +1026,17 @@ export function initAudio() {
   violin.connect(masterGain);
   custom.connect(masterGain);
 
-  cello.loadPair(bundledAssetPath('cello'), bundledAssetPath('cello_loud')).catch((e) => console.warn('cello samples failed to load:', e.message));
-  viola.loadPair(bundledAssetPath('viola'), bundledAssetPath('viola_loud')).catch((e) => console.warn('viola samples failed to load:', e.message));
-  violin.loadPair(bundledAssetPath('violin'), bundledAssetPath('violin_loud')).catch((e) => console.warn('violin samples failed to load:', e.message));
-  // custom (SineVoice) needs no loadPair() — it's synchronously ready, see
-  // its class comment above.
+  for (const [name, v] of [
+    ['cello', cello],
+    ['viola', viola],
+    ['violin', violin],
+  ]) {
+    v.load().catch((e) => console.warn(`${name} samples failed to load:`, e.message));
+  }
+  // custom (SineVoice) needs no load — it's synchronously ready, see its
+  // class comment above.
 
   lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
-  lastFreqComputeTime = 0;
-  cachedMappedFreq = null;
   customSmoothedLevel = null;
   lastCustomPitchUpdateTime = 0;
   customGainLastPushMs = 0;
@@ -1007,7 +1094,11 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
   // responsive below, matching the original design intent — nobody has
   // reported this as a problem for them, and there's no reason to trade
   // away their responsiveness pre-emptively.
-  if (activeVoiceName === 'custom') {
+  // TWENTIETH follow-up: this branch originally served Custom only; it now
+  // serves every voice in SMOOTH_PIPELINE_VOICES (`config` is the active
+  // voice's own range/gain). Variable names keep their historical
+  // custom* prefix.
+  if (SMOOTH_PIPELINE_VOICES.has(activeVoiceName)) {
     // NINTH follow-up: reported bug — after tremoring, returning the stick
     // to true rest (Intensity reading of 0) left a faint tone playing
     // instead of true silence, on Custom specifically. This is the same
@@ -1121,7 +1212,17 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
     // vs exponential RAMP SCHEDULING fix below — both "exponential" but
     // about different things.)
     const freq = config.minFreq * Math.pow(config.maxFreq / config.minFreq, customSmoothedLevel);
-    if (Math.abs(freq - lastSent.freq) > FREQ_EPSILON) {
+    // TWENTIETH follow-up: FREQ_EPSILON (2Hz) is a fine step in Custom's
+    // 200-700Hz range (~0.05-0.17 semitone) but about half a semitone in
+    // Cello's 65-130Hz register — slow intensity changes would glide half a
+    // semitone, then hold, i.e. audible pitch stepping. Non-Custom smooth
+    // voices use a pitch-relative threshold (PITCH_EPSILON_SEMITONES)
+    // instead; Custom keeps its exact, proven behavior.
+    const pitchMoved =
+      activeVoiceName === 'custom'
+        ? Math.abs(freq - lastSent.freq) > FREQ_EPSILON
+        : !(lastSent.freq > 0) || Math.abs(12 * Math.log2(freq / lastSent.freq)) > PITCH_EPSILON_SEMITONES;
+    if (pitchMoved) {
       const freqRampSec = customRampSec(nowMs, customFreqLastPushMs);
       voice.setFrequency(freq, freqRampSec);
       lastSent.freq = freq;
@@ -1145,108 +1246,10 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
       // End Session's setAudioHook(null) call.
       console.log('[sonification:custom]', 'at=' + nowMs, 'elapsedSec=' + elapsedSec, 'gainPush=' + customGainPushCount, 'brightPush=' + customBrightPushCount, 'freqPush=' + customFreqPushCount, 'level=' + level.toFixed(1), 'smoothedLevel=' + (customSmoothedLevel * 100).toFixed(1), 'gain=' + gain.toFixed(3), 'freq=' + freq.toFixed(1));
     }
-    return; // skip the generic/FFT-based path below entirely
   }
-
-  // Gain/brightness (Cello/Viola/Violin only): updated every call (real
-  // BLE packet cadence, ~50Hz) — deliberately NOT gated behind the FFT
-  // throttle below. See the buzzy/pulsing-artifact fix note on
-  // FREQ_RECOMPUTE_INTERVAL_MS above: these used to wait on that same
-  // 300ms gate, which produced a perceptible ~3.3Hz "snap, then hold"
-  // stepping in volume — inaudible under a sample's own timbral motion.
-  // Decoupling them removes that stepping for these three voices.
-  //
-  // TWELFTH follow-up: reported bug — sound still audible at true rest
-  // (Intensity reading of 0) on Viola. The comment just above this block
-  // used to claim these three voices were already immune to the ELEVENTH
-  // follow-up's "stuck at rest" class of bug because "gain is exactly 0
-  // on the very next packet, no lag" — true of the COMMAND (normLevel
-  // really does hit exact integer 0 at rest; see rmsToLevel()'s noise
-  // floor in dsp.js, confirmed, not a residual-sensor-noise issue), but
-  // not of the resulting SOUND. voice.setGain() (SampleVoice, above)
-  // issues that 0 target via setTargetAtTime() — an open-ended
-  // exponential approach, not a discrete jump — so "exactly 0, no lag"
-  // described the target, not the actual audio, which only ever decays
-  // toward silence on an 0.08s time constant and mathematically never
-  // reaches it. After a sustained/intense tremor that tail starts from a
-  // larger gain value, so it takes longer to decay below audibility —
-  // read by ear as "still hearing sound right after Intensity hits 0."
-  // This is a different mechanism from the ELEVENTH follow-up's stale-
-  // scheduled-ramp revival (these voices never schedule a future ramp
-  // end event the way SineVoice's setGain() does), so stopHard()'s
-  // STALE_RAMP_GUARD_SEC backstop isn't what's needed here — just a hard
-  // discrete snap to 0 instead of an asymptotic approach, exactly what
-  // SampleVoice.stopHard() already does (reused as-is from the EIGHTH
-  // follow-up/session-end path; see its comment above). Gated on
-  // normLevel === 0 specifically (true rest), not gain <= some epsilon,
-  // so the three voices' normal unsmoothed/fully-responsive gain path
-  // during genuine active motion is untouched.
-  const gain = normLevel * config.maxGain;
-  if (normLevel === 0) {
-    if (lastSent.gain !== 0) {
-      voice.stopHard(voice.ctx.currentTime);
-      lastSent.gain = 0;
-    }
-  } else if (Math.abs(gain - lastSent.gain) > GAIN_EPSILON) {
-    voice.setGain(gain);
-    lastSent.gain = gain;
-  }
-  if (Math.abs(normLevel - lastSent.bright) > BRIGHT_EPSILON) {
-    voice.setBrightness(normLevel);
-    lastSent.bright = normLevel;
-  }
-  if (DUAL_LAYER_ENABLED && Math.abs(normLevel - lastSent.intensity) > INTENSITY_EPSILON) {
-    voice.setIntensity(normLevel);
-    lastSent.intensity = normLevel;
-  }
-
-  // Frequency (Cello/Viola/Violin only): the FFT-based recompute is
-  // meaningfully more CPU work than anything else this engine does at
-  // per-packet cadence, so only this part stays throttled to
-  // FREQ_RECOMPUTE_INTERVAL_MS.
-  const now = Date.now();
-  if (now - lastFreqComputeTime < FREQ_RECOMPUTE_INTERVAL_MS) return;
-  lastFreqComputeTime = now;
-
-  // Uses the dedicated longer window (see FREQ_WIN in liveSession.js), not
-  // the shorter recentX/Y/Z used for gain above — confirmed via real
-  // device logs that ~2s was too short to reliably resolve low
-  // frequencies (barely one full cycle at 0.5Hz).
-  const fx = freqWin?.x ?? recentX;
-  const fy = freqWin?.y ?? recentY;
-  const fz = freqWin?.z ?? recentZ;
-
-  // Only trust a dominant-frequency reading when there's enough real signal
-  // above the noise floor for it to be meaningful — confirmed via a
-  // motionless-device test that, absent this gate, the FFT reports
-  // whichever bin happens to have the most noise energy as if it were a
-  // real frequency (readings of 10-20Hz+ with zero actual movement).
-  // MIN_INTENSITY_FOR_FREQ mirrors roughly the low end of the "Mild"
-  // tremor band — comfortably above sensor noise, well below requiring
-  // strong/obvious movement.
-  let combined = null;
-  if (level >= MIN_INTENSITY_FOR_FREQ) {
-    combined = combinedDominantFreq(fx, fy, fz, sr || 50, 100);
-    if (combined != null) {
-      smoothedFreq = smoothedFreq == null ? combined : smoothedFreq * (1 - FREQ_SMOOTHING_ALPHA) + combined * FREQ_SMOOTHING_ALPHA;
-    }
-  } else if (smoothedFreq != null) {
-    smoothedFreq = smoothedFreq * (1 - FREQ_DECAY_ALPHA) + SOURCE_FREQ_MIN_HZ * FREQ_DECAY_ALPHA;
-    if (Math.abs(smoothedFreq - SOURCE_FREQ_MIN_HZ) < 0.05) smoothedFreq = null; // fully settled — fresh start next time real movement resumes
-  }
-  cachedMappedFreq =
-    smoothedFreq != null
-      ? mapRange(smoothedFreq, SOURCE_FREQ_MIN_HZ, SOURCE_FREQ_MAX_HZ, config.minFreq, config.maxFreq)
-      : null;
-  // Gated behind SONIFICATION_DEBUG_LOGGING — see that flag's comment above.
-  if (SONIFICATION_DEBUG_LOGGING) {
-    console.log('[sonification]', 'sr=' + (sr || 50).toFixed?.(1), 'level=' + level.toFixed(1), 'rawFreq=' + (combined != null ? combined.toFixed(2) : 'null'), 'smoothedFreq=' + (smoothedFreq != null ? smoothedFreq.toFixed(2) : 'null'), 'mappedFreq=' + (cachedMappedFreq != null ? cachedMappedFreq.toFixed(1) : 'null'));
-  }
-
-  if (cachedMappedFreq != null && Math.abs(cachedMappedFreq - lastSent.freq) > FREQ_EPSILON) {
-    voice.setFrequency(cachedMappedFreq);
-    lastSent.freq = cachedMappedFreq;
-  }
+  // TWENTY-SECOND follow-up: the original FFT-based pitch path for the
+  // single-sample Cello/Viola/Violin lived here. Every voice is now in
+  // SMOOTH_PIPELINE_VOICES, so the branch above always handles it.
 }
 
 export function silenceAudio() {
@@ -1290,10 +1293,12 @@ export function silenceAudio() {
   // dropping those. It's unmuted again at the start of the next session
   // (see unmuteAudio(), called from sessionLogic.js's startSession()).
   if (masterGain) masterGain.gain.value = 0; // reversed by unmuteAudio() below
+  // TWENTY-FIRST/SECOND follow-ups: disconnect every string zone so no
+  // pitch-shifter keeps running between sessions.
+  cello?.release();
+  viola?.release();
+  violin?.release();
   lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
-  lastFreqComputeTime = 0;
-  cachedMappedFreq = null;
-  smoothedFreq = null;
   customSmoothedLevel = null;
   lastCustomPitchUpdateTime = 0;
   customGainLastPushMs = 0;

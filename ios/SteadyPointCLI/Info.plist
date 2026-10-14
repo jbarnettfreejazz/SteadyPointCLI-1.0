@@ -31,12 +31,12 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>SteadyPoint connects to your tremor-monitoring device over Bluetooth to read tremor data.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>SteadyPoint connects to your tremor-monitoring device over Bluetooth to read tremor data.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string></string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

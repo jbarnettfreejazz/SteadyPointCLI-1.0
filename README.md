@@ -1955,6 +1955,162 @@ packet/tick, and `getLiveState()` always returns current state
   patch-package change to the library — relevant to the planned Spotify
   session type.
 
+## Nineteenth follow-up — sonification silent after switching to a Bluetooth speaker mid-session
+
+**Reported by a tester; reproduced**: start a sound-on session on the
+phone speaker, then connect/select a Bluetooth speaker — sonification
+goes silent for the rest of the session. Connecting the speaker before
+the session works.
+
+**Cause**: switching output can change the hardware sample rate/channel
+count, and AVAudioEngine then stops itself and posts
+`AVAudioEngineConfigurationChangeNotification`. react-native-audio-api
+0.4.18 registers no observers at all, so nothing restarted it (the JS
+side can't tell — the context's own state still reads "running"). Same
+gap for `AVAudioSessionInterruptionNotification`: after a phone call /
+Siri / alarm, the engine stayed stopped (the Eighteenth follow-up's
+known limitation).
+
+**Fix** (`patches/react-native-audio-api+0.4.18.patch`, native, applied
+by patch-package on `postinstall`): `AudioPlayer.m` now observes both
+notifications. On a configuration change or interruption end it
+re-establishes the main-mixer -> output connection at the new hardware
+format, re-activates the session and restarts the engine — only if
+`isRunning` is true, so a route change while SteadyPoint is idle (engine
+suspended between sessions) doesn't wake it. Observers are removed in
+`cleanup`. Native logs (Xcode console, not Metro) are prefixed
+`[SteadyPoint audio]`. The patch file still contains the original
+`Constants.h` `<cstddef>` fix; it's regenerated against the pristine
+0.4.18 package and verified with patch-package 8.
+
+## Twentieth follow-up — Cello prototypes on the Custom (sine) engine
+
+Goal: bring Custom's clean, smooth, pulsation-free behavior to the string
+voices. Two candidate approaches, both prototyped on Cello only and
+selectable in Settings > Tonal Range next to the original Cello for A/B
+listening. Both switch Cello's pitch from the FFT dominant frequency to
+**intensity** (exponential mapping across 65-130Hz), like Custom — an
+explicit product decision.
+
+- **Cello A (test)** — the recorded cello sample, driven by Custom's
+  pipeline: smoothed level, chained linear ramps capped at 0.3s, stale-
+  ramp guard, rest snap. Implemented as `SmoothSampleAdapter` over the
+  existing `cello` SampleVoice (no second real-time pitch-shifter — CPU
+  ceiling, see `DUAL_LAYER_ENABLED`). Pitch ramps the stretcher's
+  `semitones` param linearly (= exponential in Hz), anchored at its own
+  last target rather than a native `.value` read. Risk: the pitch-shifter
+  itself may still warble while pitch moves.
+- **Cello B (test)** — Custom's `SineVoice` with a harmonic waveform
+  (`createPeriodicWave`, `CELLO_B_HARMONICS`): a "body-resonant" recipe
+  that keeps the fundamental strongest but holds harmonics 2-5 up, so the
+  65-130Hz register is audible on a phone speaker (~26% of energy >=200Hz
+  at 65Hz vs ~8% for a plain 1/n^1.5 rolloff). Synthesized, not recorded,
+  timbre. No vibrato (the library can't connect a node to an AudioParam,
+  so it would need JS-scheduled modulation).
+
+Shared change: the smooth branch in `updateAudio()` now serves every
+voice in `SMOOTH_PIPELINE_VOICES`. Non-Custom voices use a pitch-relative
+push threshold (`PITCH_EPSILON_SEMITONES` = 0.1) because 2Hz is half a
+semitone in Cello's register; Custom keeps its exact 2Hz behavior.
+
+Verified off-device with a mock-AudioContext simulation (ramp 0->80
+intensity, hold, back to 0): no errors; every ramp <= 0.3s; all voices end
+at gain 0 after `silenceAudio()`; Cello A touches only its gain and
+semitones params; Custom's event stream unchanged by this follow-up.
+
+Starting values to tune by ear: `cello_b.maxGain` 0.3 (vs the sample's
+0.4), `CELLO_B_HARMONICS`. Once a winner is chosen, apply it to Viola and
+Violin and remove the losing prototype (and its Settings pill).
+
+## Twenty-first follow-up — Cello A becomes a multi-sampled 65-1000Hz cello
+
+Cello A (sample on Custom's smooth pipeline) won the Twentieth follow-up's
+A/B. Requested next: widen its range from 65-130Hz to 65-1000Hz.
+
+**Constraint found**: react-native-audio-api's pitch-shifter clamps
+`semitones` to -12..+12 (`StretcherNode.cpp`), so one recording can only
+span one octave either side of its own pitch — which is why every string
+voice's register was exactly one octave. A different single recording
+can't fix that.
+
+**Approach**: seven VSCO 2 CE cello notes (same "Cello Section / susvib"
+set as the existing cello.wav, CC0), one every fifth — C2, G2, D3, A3, E4,
+B4, F5 — with the voice handing off between neighbours as pitch rises.
+Each note is shifted at most ~+/-3.5 semitones (top note up to ~+6 for
+1000Hz) — far less than the old single sample's full octave, so less
+pitch-shifter warble. Pitches and loudness were measured, not assumed
+(see AUDIO_SOURCES.md); per-zone trim matches each note's loop RMS to
+cello.wav's so hand-offs don't jump in level.
+
+- `ZonedSampleVoice` (audio.js) replaces the Twentieth follow-up's
+  `SmoothSampleAdapter`; same smooth-pipeline interface. Hand-offs
+  crossfade over `ZONE_XFADE_SEC` (0.3s) with both notes tracking pitch in
+  unison; `ZONE_HYSTERESIS_SEMITONES` (1.0) prevents flapping near a
+  boundary.
+- **CPU**: this library renders only what's connected to the destination,
+  so a zone's gain node is connected only while it's in use (max two
+  during a hand-off) and all zones disconnect at session end
+  (`release()`, from `silenceAudio()`).
+- **Also changed for all voices** (`routeSampleVoices()`): the original
+  Cello/Viola/Violin SampleVoices used to be connected permanently, so all
+  three pitch-shifters rendered during every session (even Custom). Now
+  only the active one is connected, on every session start.
+- Assets linked with `npx react-native-asset` (6 new files; cello.wav is
+  reused for C2) — ~13MB added to the bundle.
+
+Verified off-device with a mock-AudioContext simulation that models graph
+connections and timers: 0->100->0 intensity ramp walks up through all 7
+notes and back (12 hand-offs, in order); hovering near a boundary causes
+no hand-offs; at most 2 pitch-shifters render during Cello A and 0 after
+End Session; Custom sessions now render 0 pitch-shifters (previously 3);
+Custom's in-session automation is byte-identical to the previous build.
+
+To tune by ear: per-zone loudness (`loopRmsDb` in `CELLO_ZONES` — raise a
+zone's value to make it quieter), `ZONE_XFADE_SEC`,
+`ZONE_HYSTERESIS_SEMITONES`, `cello_a.maxFreq`.
+
+## Twenty-second follow-up — all three strings multi-sampled; test voices retired
+
+Cello A tested well across 65-1000Hz, so the same approach now covers all
+three string voices, Cello A *becomes* Cello, and Cello B is removed.
+
+- **Cello** 65-1000Hz — the Twenty-first follow-up's seven cello notes.
+- **Viola** 131-1175Hz (was 196-330Hz) — six VSCO Viola Section notes a
+  fifth apart, C3-B5 (viola.wav reused as G3).
+- **Violin** 196-1568Hz (was 392-784Hz) — seven VSCO Solo Violin notes,
+  G3-G6 (the same set the original violin.wav came from; it has G/A/C/E per
+  octave, so steps alternate fourths and fifths). Capped at G6 — the C7
+  sample exists but 2kHz+ is shrill for continuous sonification.
+- All pitch now follows **intensity** on the smooth pipeline (like Custom);
+  every voice is in `SMOOTH_PIPELINE_VOICES`.
+- Each instrument's zones are trimmed to its *original* sample's loudness
+  (`ZONE_LOUDNESS_REF_DB`), so overall levels are unchanged per instrument.
+- Viola/violin pitches and loudness were measured like the cello's (see
+  AUDIO_SOURCES.md). Violin G3's fundamental is weak (third harmonic
+  strongest) so autocorrelation locked onto h3; its 195.5Hz pitch was
+  confirmed from the harmonic series.
+
+**Removed** (unused once every voice moved to the zoned engine): the
+original single-sample `SampleVoice` class and its FFT dominant-frequency
+pitch path in `updateAudio()` (and its constants/state), the Twentieth
+follow-up's `SmoothSampleAdapter`, Cello B (`CELLO_B_HARMONICS`, the
+`cello_b` voice), `routeSampleVoices()` (zones self-connect, so idle
+instruments already do no work), and the assets cello_loud / viola_loud /
+violin_loud / violin.wav (~12MB). `SineVoice`'s optional `harmonics`
+parameter stays (harmless, unused). Saved `cello_a`/`cello_b` choices
+migrate to `cello` (persistence.js; Settings also tolerates a stale value).
+
+Verified off-device: ESLint `no-undef`/`no-unused-vars` clean after the
+removals (linter confirmed to catch a planted error); mock-AudioContext
+simulation of a slow 0->100->0 sweep on each voice — each instrument walks
+its notes in order (cello 12 hand-offs, viola 10, violin 12), at most 2
+pitch-shifters render at once, none after End Session; Custom renders none
+and its in-session automation is byte-identical to the previous build; a
+stale `cello_a`/`cello_b` voice falls back to Cello; exactly the 20 WAVs on
+disk are decoded, with no load warnings. Asset linking via
+`npx react-native-asset` (12 added, 4 removed in the Xcode project — 6
+lines each, nothing else touched).
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

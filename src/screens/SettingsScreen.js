@@ -38,10 +38,12 @@ const VOICE_OPTIONS = [
   { key: 'custom', label: 'Custom' },
 ];
 
-// Bounds for the "Custom" tonal-range sliders — wide enough to cover (and
-// extend past) all three fixed instrument registers (cello 65-130Hz,
-// viola 196-330Hz, violin 392-784Hz), so "Custom" can genuinely occupy any
-// of those registers or a range of its own, not just the gaps between them.
+// Bounds for the "Custom" tonal-range sliders — originally chosen to cover
+// (and extend past) the three fixed one-octave instrument registers
+// (cello 65-130Hz, viola 196-330Hz, violin 392-784Hz). Since the
+// TWENTY-SECOND follow-up the multi-sampled strings span far wider ranges
+// (cello 65-1000Hz, viola 131-1175Hz, violin 196-1568Hz — see audio.js
+// VOICE_CONFIG); these slider bounds are unchanged.
 const CUSTOM_RANGE_SLIDER_MIN = 50;
 const CUSTOM_RANGE_SLIDER_MAX = 1000;
 // Smallest gap enforced between the Lower and Upper custom-range values —
@@ -54,7 +56,11 @@ export default function SettingsScreen() {
   const navigation = useNavigation();
   const { state, actions } = useStore();
   const currentValue = state.settings.fullScaleG ?? DEFAULT_FULL_SCALE_G;
-  const currentVoice = state.settings.sonificationVoice ?? 'cello';
+  // TWENTY-SECOND follow-up: the 'cello_a'/'cello_b' test voices were
+  // removed (Cello A became Cello) — treat any stale value as Cello so a
+  // pill is always shown selected. persistence.js also migrates it.
+  const savedVoice = state.settings.sonificationVoice ?? 'cello';
+  const currentVoice = VOICE_OPTIONS.some((v) => v.key === savedVoice) ? savedVoice : 'cello';
   const customMinHz = state.settings.customTonalRangeMinHz ?? 200;
   const customMaxHz = state.settings.customTonalRangeMaxHz ?? 700;
 

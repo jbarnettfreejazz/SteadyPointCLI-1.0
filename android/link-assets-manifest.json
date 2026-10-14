@@ -2,28 +2,84 @@
   "migIndex": 1,
   "data": [
     {
-      "path": "src/assets/audio/cello_loud.wav",
-      "sha1": "72d553ce2ce8dfea6ed98859fb11809d89df6602"
+      "path": "src/assets/audio/cello_a3.wav",
+      "sha1": "5c94dad1c5ad7f8c7646861864d69325add2dd14"
+    },
+    {
+      "path": "src/assets/audio/cello_b4.wav",
+      "sha1": "f1ca9e151237f51ad042374cd1efc94c62a8e161"
+    },
+    {
+      "path": "src/assets/audio/cello_d3.wav",
+      "sha1": "2345b397794ba6afb8597d5b4b160fce07d9945f"
+    },
+    {
+      "path": "src/assets/audio/cello_e4.wav",
+      "sha1": "792bfebf34a821c4b354ef5b5e85d7a5796f6810"
+    },
+    {
+      "path": "src/assets/audio/cello_f5.wav",
+      "sha1": "948a6da59d1f2aab9f564012253af4e46ab5cc78"
+    },
+    {
+      "path": "src/assets/audio/cello_g2.wav",
+      "sha1": "be4a2c3e9154be2e4c5c32c353ab611b23b6627a"
     },
     {
       "path": "src/assets/audio/cello.wav",
       "sha1": "35658fa164c1d8ec6937ba46926af88ef5af4fea"
     },
     {
-      "path": "src/assets/audio/viola_loud.wav",
-      "sha1": "8f19236d9d727cad0ffc5a77ea0531ceeba0d2ac"
+      "path": "src/assets/audio/viola_a4.wav",
+      "sha1": "49c23cad69b31ac4dcbe2123eeb5907fd735aa26"
+    },
+    {
+      "path": "src/assets/audio/viola_b5.wav",
+      "sha1": "eea29bbebdb09cd3a0857ed52810d26aac7b910e"
+    },
+    {
+      "path": "src/assets/audio/viola_c3.wav",
+      "sha1": "78089eac8936d61cfdc099d7590c160ab5c66472"
+    },
+    {
+      "path": "src/assets/audio/viola_d4.wav",
+      "sha1": "f462ad5f4b9e3da4f8098e89f1e6a4add5381ab1"
+    },
+    {
+      "path": "src/assets/audio/viola_e5.wav",
+      "sha1": "0b36826304fff43f80d3bd0e792a142a7a905825"
     },
     {
       "path": "src/assets/audio/viola.wav",
       "sha1": "953d56083bbc9436bab935324ee06b19669ce705"
     },
     {
-      "path": "src/assets/audio/violin_loud.wav",
-      "sha1": "c832b031fb1c4dd299564393ed3418a7d55c39f4"
+      "path": "src/assets/audio/violin_c4.wav",
+      "sha1": "37729555ef727d3df863a8d56c6bf1a320e300db"
     },
     {
-      "path": "src/assets/audio/violin.wav",
-      "sha1": "0a3424d7d82122915e58bad818e8c61274d53f65"
+      "path": "src/assets/audio/violin_c5.wav",
+      "sha1": "607e9e073be96ae688c71d99f3509d4257c5d40c"
+    },
+    {
+      "path": "src/assets/audio/violin_c6.wav",
+      "sha1": "27658e660a85a29d7b269809dcdcaeba67c52afb"
+    },
+    {
+      "path": "src/assets/audio/violin_g3.wav",
+      "sha1": "a622acb47d09b67c86bb7c71bdf468d4c03bc427"
+    },
+    {
+      "path": "src/assets/audio/violin_g4.wav",
+      "sha1": "58e25dbefb256b46709b2ee6cbef3c9a1b5392e8"
+    },
+    {
+      "path": "src/assets/audio/violin_g5.wav",
+      "sha1": "243b27c2482845dcea97d9a49c2618a79be81e18"
+    },
+    {
+      "path": "src/assets/audio/violin_g6.wav",
+      "sha1": "ff6ace20d85e02ecdb96dbd581eef9d9955ce6d0"
     }
   ]
 }
