@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
-import ScoreRing from '../components/ScoreRing';
+import { MedianIntensityRing, TimeInBands } from '../components/IntensityDisplay';
+import { sessionIntensity } from '../utils/intensityStats';
 import IntensityChart from '../components/IntensityChart';
 import { sessionInsight } from '../utils/sessionStats';
 import { startSimilarSession } from '../services/sessionLogic';
@@ -25,8 +26,10 @@ export default function SessionDetailScreen() {
   const sound = s.feedbackType === 'both' || s.feedbackType === 'audio' ? 'Sound on' : 'No sound';
   const tags = [act, `${s.duration} min`, sound, guide];
 
+  const intensity = sessionIntensity(s);
+
   const stats = [
-    { label: 'DOMINANT FREQ', val: `${typeof s.freq === 'number' ? s.freq.toFixed(1) : s.freq} Hz`, sub: 'peak signal', hi: false },
+    { label: 'DOMINANT FREQ', val: typeof s.freq === 'number' && s.freq > 0 ? `${s.freq.toFixed(1)} Hz` : '—', sub: s.freq > 0 ? 'peak signal' : 'none detected', hi: false },
     { label: 'DURATION', val: `${s.duration} min`, sub: 'session length', hi: false },
   ];
 
@@ -59,19 +62,10 @@ export default function SessionDetailScreen() {
           </View>
         )}
 
-        <View style={styles.ringWrap}>
-          <ScoreRing
-            size={128}
-            strokeWidth={7}
-            score={s.score || 0}
-            color={c.info}
-            trackColor={c.bd3}
-            centerLabel={s.score != null ? s.score : '—'}
-            subLabel="STEADYPOINT"
-            textColor={c.tx1}
-            subTextColor={c.tx3}
-          />
-        </View>
+        {/* TWENTY-SIXTH follow-up: median intensity + time in each band
+            replace the SteadyPoint Score ring. */}
+        <MedianIntensityRing info={intensity} c={c} />
+        <TimeInBands info={intensity} c={c} />
 
         <View style={styles.statsGrid}>
           {stats.map((st) => (
@@ -139,7 +133,6 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 20 },
   statusBox: { borderWidth: 1, borderRadius: radii.md, padding: 12, marginBottom: 20 },
   tagPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3, marginRight: 4, marginBottom: 4 },
-  ringWrap: { alignItems: 'center', marginBottom: 24 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -5, marginBottom: 16 },
   chartWrap: { marginBottom: 14 },
   samplesRow: { padding: 10, borderRadius: radii.md, marginBottom: 16, alignItems: 'center' },

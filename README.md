@@ -2111,6 +2111,237 @@ disk are decoded, with no load warnings. Asset linking via
 `npx react-native-asset` (12 added, 4 removed in the Xcode project — 6
 lines each, nothing else touched).
 
+## Xcode project file: user's copy is authoritative
+
+`ios/SteadyPointCLI.xcodeproj/project.pbxproj` in the zips this chat had
+been sending came from an older snapshot with React Native's default
+bundle ID (`org.reactjs.native.example.SteadyPointCLI`), build number 1,
+no signing team, no `PrivacyInfo.xcprivacy` in Resources, and none of the
+settings `pod install` writes. Unzipping it over the real project reset
+those — so archives were uploaded to a second App Store Connect record
+("SteadyPoint") instead of the testers' "SteadyPoint0.1"
+(`com.kaivo.steadypoint`). Replaced with the user's own file (bundle ID
+`com.kaivo.steadypoint`, team 6N4P2VVN25, build 22, privacy manifest and
+Pods settings present; all 20 current WAVs referenced, none retired).
+Going forward, zips omit project.pbxproj unless a change requires it, and
+then start from the user's latest copy.
+
+## Twenty-third follow-up — Custom Sessions re-enabled and reworked
+
+The Home section previously hidden behind `FEATURE_MY_SESSIONS` is back as
+**CUSTOM SESSIONS** (`FEATURE_CUSTOM_SESSIONS` in HomeScreen.js).
+
+- **Home** shows the two most recently used custom sessions
+  (`HOME_CUSTOM_SESSION_LIMIT`), each with its configuration line under the
+  name, plus edit (✎) and delete (✕). With more than two, a
+  **View all (n)** link sits at the right of the header row.
+- **Custom Sessions screen** (`customSessions` route,
+  CustomSessionsScreen.js): every custom session, most recently used first;
+  tap to start, ✎ to edit (Setup returns to this screen when done), ✕ to
+  delete.
+- **Shared row** (`components/CustomSessionRow.js`) and helpers
+  (`utils/customSessions.js`: `sortByRecentUse`, `describeCustomSession`)
+  so both places stay identical.
+- **No more 3-session cap.** Removed from `savePinnedSession()`, the
+  auto-pin path in `startSession()`, the reducer's
+  `ADD_PINNED_SESSION` (`.slice(0, 3)`) and Setup's "Save to Home (full)".
+  Previously the oldest was silently replaced (and its guide audio
+  deleted).
+- **Recency:** `lastUsedAt` is set on creation and on every successful
+  start via the new `startCustomSession()` (not when disconnected — the
+  "Not connected" alert path doesn't count). Editing doesn't reorder.
+  Sessions saved before this field existed sort after timestamped ones,
+  newest id first — no data migration needed.
+- **Auto-pin de-duplication:** starting from Setup with a name that
+  matches an existing custom session (trimmed, case-insensitive) updates
+  that one (keeping its name) instead of adding a copy — needed now that
+  there's no cap.
+- Setup's Back/Cancel and Save/Update now return to whichever screen
+  opened Setup (Home or Custom Sessions). Delete confirmation reworded to
+  "Delete custom session".
+
+Verified off-device: ESLint (with React JSX rules) clean apart from three
+pre-existing unused imports; 22 behavioural checks running the real
+sessionLogic.js + reducer against a simulated store — no cap, legacy
+ordering, start moves to top and persists, no usage bump when
+disconnected, edit keeps position and doesn't duplicate, auto-pin
+de-duplicates (keeping the original name) and adds new names, delete,
+description strings, Home limit.
+
+## Twenty-fourth follow-up — save a Session setup from Summary; "Start →" on custom sessions
+
+**Session origin.** `startSession()` takes `origin` ('setup' default,
+'quickStart', 'custom' + `customSessionId`, 'similar'); callers pass theirs
+(Home Quick Start, `startCustomSession()`, `startSimilarSession()`).
+Recorded in a module-level `currentSessionOrigin` and written by
+`endSession()` to `state.results` and the session history record
+(`origin`, `customSessionId`) — groundwork for a future "Save as custom
+session" on Session Detail.
+
+**Summary "Save this setup?" card.** `endSession()` sets
+`results.saveOffer` (the setup as configured at start) only when the
+session started from Session setup, wasn't auto-saved by name, and
+`findMatchingCustomSession()` finds no custom session with the same
+activity, duration, sound on/off and guide (guide audio matched by file
+name, since each pick copies to a new path). Never for Quick Start, custom
+or "Start similar" sessions (explicit product decision). The card shows the
+setup line with "Save as custom session" and "Not now"; Save opens a
+page-sheet name editor (same pattern as the note editor, for keyboard
+reasons) and calls `saveSetupAsCustomSession()` — rejects blank and
+duplicate (case-insensitive) names, saves with `createdAt`/`lastUsedAt` so
+it lists first, then the card confirms "✓ Saved … to Custom Sessions".
+
+**Fix (pre-existing):** `savePinnedSession()` persisted a snapshot with the
+old `pinnedNextId`, so if the app was closed before anything else saved
+state, the next new custom session after a restart reused an id (the load-
+time repair then renumbered). The snapshot now advances the counter;
+`saveSetupAsCustomSession()` does the same.
+
+**"Start →"** (blue, Quick Start style) added to `CustomSessionRow`, so it
+appears on Home and the Custom Sessions screen; the row body still starts
+the session too.
+
+Verified off-device: React-aware ESLint clean; 19 new behavioural checks
+on the real sessionLogic.js + reducer (origin tagging on results and
+history; offer only for unsaved Setup sessions; none for Quick Start,
+custom, "Start similar", auto-saved-by-name or matching setups; guide
+matching by file name; Summary save incl. blank/duplicate rejection,
+fields, ordering, unique ids, persisted counter), plus the previous 22.
+
+## Twenty-fifth follow-up — activity icons on custom sessions
+
+`CustomSessionRow` shows the activity icon on the left, matching Quick
+Start: Meditative = brain on blue, Engaged = book on green, Active = walk
+on orange, same 40×40 box and 20px icon. The card switched from the light-
+blue fill to Quick Start's neutral `bg2`/`bd3` style, because the
+Meditative icon's light-blue box disappeared against the blue fill; the
+blue name and "Start →" still distinguish custom sessions. Applies to Home
+and the Custom Sessions screen (shared component).
+
+## Twenty-sixth follow-up — replacing the SteadyPoint Score (round 1 of 2)
+
+The score was effectively inverted intensity. It's being replaced by two
+direct measures (product decisions: **median** rather than mean, so a brief
+spike doesn't skew it; **all four bands** shown, so percentages add to 100%):
+
+- **Median intensity** — the session's typical 0-100 level, with its band.
+- **Time in each band** — % of the session at None (<20), Mild (20-44),
+  Moderate (45-69), High (70+): the live screen's bands and colours.
+
+`utils/intensityStats.js` holds the bands, `median()`, `bandPercentages()`
+(largest-remainder rounding so they always total 100), `sessionIntensity()`
+and `intensityHeadline()`. `endSession()` now stores `medianIntensity`,
+`bandPct` and `intensityValid` (same 10-reading / 30-second gate as the
+score) on results and the session record, from the full-resolution trace.
+Older sessions are derived on the fly from their saved ~150-point
+`intensityTrace` (and stored pct fields when present) — no migration.
+
+Round 1 screens: **Summary** and **Session Detail** show a median-intensity
+ring (filled to the level, coloured by band, band name inside) plus a
+"Time in each band" bar and legend; Summary's headline describes the
+session by band ("A calm session.", "Mostly mild tremor this session.", …,
+"Session too short to measure."). **Session History** badges show median
+intensity coloured by band. Components: `components/IntensityDisplay.js`
+(`MedianIntensityRing`, `TimeInBands`).
+
+**Round 2 (pending):** Home (ring, daily bars, 7-day average) and
+Analytics still use the score, which `endSession()` keeps computing until
+then; afterwards the score calculation and `scoreColor`/`scoreTextColor`
+can be removed.
+
+Verified off-device: React-aware ESLint clean; 14 checks on the intensity
+maths (band edges, median vs spike, 100% totals, new/old/very-old/invalid
+sessions, headlines) plus the existing 41 session-logic checks.
+
+## Twenty-seventh follow-up — Analytics redesigned around intensity (score removed)
+
+Built from the user's design (sections below removed white space moved up):
+
+1. Header: "Analytics" + **All sessions history (n)** pill (n = all recorded
+   sessions) → Session History. The old bottom "Session history" row is gone.
+2. **7D / 30D / All** period selector (default 30D) driving everything below.
+3. **Sessions** (all sessions in period) and **Avg intensity** (mean of each
+   measured session's median, coloured by band).
+4. **Your calmest session**: All types / Meditative / Engaged / Active chips;
+   lowest median in period + filter (ties → most recent); band + "% below
+   your avg" (vs. the same filter's average); date/time; Activity / Length /
+   Sound / Guide tiles; **Start similar session** (`startSimilarSession`).
+5. **Intensity chart** (7-DAY / 30-DAY / ALL-TIME): one dot per session in
+   its band colour, blue 3-session rolling average, dashed band boundaries at
+   20/45/70, type dropdown; a dashed **marker for each session with a note**
+   (label = note, shortened; overlapping labels skipped, line kept).
+   Subtitle: first vs last 3-session average ("Avg down from 92 to 46").
+6. **Time in bands**: one 100% stacked bar per session (None/Mild/Moderate/
+   High), or Lines view (each band's share per session). Subtitle: first vs
+   last session's High % ("High time down from 60% to 4%").
+7. **By activity type**: avg intensity, mini band bar, session count.
+8. **Sound & guide**: avg intensity for sound on/off, with/without guide.
+9. **Avg dominant frequency** with trend: first vs second half of the
+   period, **stable** within ±0.5 Hz, else rising/falling.
+
+Band boundaries and colours are unchanged (Mild stays blue). Sessions are
+spaced evenly on chart x-axes (several on one day would otherwise overlap).
+
+Files: `utils/analyticsStats.js` (pure calculations), `components/
+AnalyticsCharts.js` (`IntensityTrendChart`, `BandsOverTimeChart`,
+`BandLegend`), `screens/AnalyticsScreen.js` (rewritten); `roundTo100` now
+exported from intensityStats.js. The old score-based helpers in
+sessionStats.js (`build7DayChart`, `byActivityType`, `bySoundFeedback`,
+`byGuideSource`, `keyInsight`) and `WeeklyBarChart` are now unused — to be
+removed with the score in the Home round.
+
+Known data caveat: `endSession()` records a placeholder dominant frequency
+of 5.7 Hz when none was detected, which is included in the frequency
+average. Worth replacing with "no reading" in the Home/score-removal round.
+
+Verified off-device: React-aware ESLint clean; 41 checks — calculation unit
+tests on 40 days of mixed old/new-format sample sessions (periods, overview,
+calmest + filter, rolling average, subtitles, note markers, band splits
+summing to 100, groups, frequency trend, axis ticks, dates) and full-screen
+renders in light and dark mode with every control exercised (history link
++ count, Start similar → calmest session, 7D/30D/All, chips, dropdown,
+bars/lines), the empty state, and no remaining "score" text; plus the 14
+intensity checks.
+
+## Twenty-eighth follow-up — Home without the score; no placeholder frequency
+
+**Dominant frequency placeholder removed.** When no dominant frequency was
+detected during a session, `endSession` used to record 5.7 Hz, which then
+showed up as real data. It now records `null`; Summary and Session Detail
+show "—" ("none detected"), and Analytics' average frequency already
+ignores missing values. Sessions saved before this change that stored the
+5.7 placeholder can't be told apart from a real 5.7 Hz reading, so they are
+left as they are.
+
+**Home uses intensity instead of the SteadyPoint Score** (lower is calmer,
+same four bands and colours as everywhere else):
+- The ring shows the most recent session's **median intensity**, filled to
+  that level and coloured by its band, with the band name underneath
+  ("TOO SHORT" if that session was too short to measure, "NO DATA" with no
+  sessions). The line under it reads e.g. "Last session: 9:10 AM · Median 30"
+  (with the date when it wasn't today).
+- The bars show the **last 7 days** (was 6), each day's height being that
+  day's average intensity (mean of its session medians, same definition as
+  Analytics' "Avg intensity"), coloured by band; days with no measured
+  session show a small grey stub.
+- The second tile is now **7-DAY AVG INTENSITY**: the mean of every
+  measured session's median over the last 7 days, with its band name.
+- Demo mode stubs updated to match.
+
+**Score removed from the app.**
+- `endSession` no longer computes the score, steadiness, consistency or the
+  separate `pctNone`..`pctHigh` fields; new records store `intensityValid`,
+  `medianIntensity` and `bandPct` only. Old records keep their fields and
+  `sessionIntensity()` still reads them, so history needs no migration.
+- The `analyticsData` store (per-day score totals that nothing displayed),
+  its `RECORD_COMPLETED_SESSION` action and its saved entry are gone; the
+  old `sp_analyticsData` entry is removed from storage on next launch.
+- Removed the unused score helpers from `utils/sessionStats.js`
+  (`hasScore`, `build7DayChart`, `byActivityType`, `bySoundFeedback`,
+  `byGuideSource`, `keyInsight`, `scoreColor`, `scoreTextColor`) and
+  `components/WeeklyBarChart.js`. `ScoreRing` stays — it's the generic ring
+  used for median intensity.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

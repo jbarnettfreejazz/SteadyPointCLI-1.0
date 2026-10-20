@@ -4,7 +4,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
-import { getTodaySessions, groupPastSessionsByDay, scoreColor, scoreTextColor } from '../utils/sessionStats';
+import { getTodaySessions, groupPastSessionsByDay } from '../utils/sessionStats';
+import { sessionIntensity } from '../utils/intensityStats';
 
 export default function SessionHistoryScreen() {
   const c = useTheme();
@@ -78,11 +79,14 @@ export default function SessionHistoryScreen() {
 function SessionRow({ s, c, onPress }) {
   const guide = s.guideSource ? s.guideSource.charAt(0).toUpperCase() + s.guideSource.slice(1) : 'No guide';
   const act = s.activityType ? s.activityType.charAt(0).toUpperCase() + s.activityType.slice(1) : '';
+  // TWENTY-SIXTH follow-up: badge shows median intensity, coloured by band
+  // (was the SteadyPoint Score).
+  const info = sessionIntensity(s);
   return (
     <Pressable onPress={onPress} style={styles.sessRow}>
-      <View style={[styles.scoreBadge, { backgroundColor: scoreColor(s.score, c) }]}>
-        <Text style={{ color: scoreTextColor(s.score, c), fontWeight: '600', fontSize: 14 }}>
-          {s.score != null ? s.score : '—'}
+      <View style={[styles.scoreBadge, { backgroundColor: info.valid ? c[info.band.bg] : c.bg2 }]}>
+        <Text style={{ color: info.valid ? c[info.band.color] : c.tx3, fontWeight: '600', fontSize: 14 }}>
+          {info.valid ? info.median : '—'}
         </Text>
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>

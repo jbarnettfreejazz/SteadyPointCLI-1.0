@@ -7,12 +7,60 @@ import { silenceAudio, setActiveVoice, setCustomTonalRange, unmuteAudio } from '
 import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
 import { downsampleTrace } from '../utils/sessionStats';
+import { median, bandPercentages } from '../utils/intensityStats';
 
 const ICON_MAP = {
   meditative: { icon: 'brain', iconBg: 'bgInfo', iconColor: 'info' },
   engaged: { icon: 'pencil', iconBg: 'bgSuccess', iconColor: 'success' },
   active: { icon: 'walk', iconBg: 'bgWarning', iconColor: 'warning' },
 };
+
+// Custom-session edits can start from Home or from the Custom Sessions
+// screen — return to whichever one the user came from.
+function goBackOrHome(navigation) {
+  if (navigation.canGoBack()) navigation.goBack();
+  else navigation.navigate('home');
+}
+
+// TWENTY-FOURTH follow-up: where the current session was started from —
+// 'setup' (Session setup → Begin session), 'quickStart' (Home templates /
+// Continuous), 'custom' (a saved custom session) or 'similar' (Session
+// Detail's "Start similar session"). Set by startSession(), read by
+// endSession() to tag the session record and to decide whether Summary
+// offers to save the setup as a custom session. Module-level because
+// endSession() is called from several places with different state
+// snapshots (RecordingScreen's store state, or the timer's start-time
+// snapshot).
+let currentSessionOrigin = { origin: 'setup', customSessionId: null, saveOffer: null };
+
+// The parts of a session's configuration a custom session stores.
+function setupOf(s) {
+  return {
+    activityType: s.config.activityType,
+    feedbackType: s.config.feedbackType,
+    duration: s.config.duration,
+    guideSource: s.guideMediaSource || null,
+    guidePath: s.guideMediaSource === 'phone' ? s.guideMediaPath : null,
+    guideName: s.guideMediaSource === 'phone' ? s.guideMediaName : '',
+  };
+}
+
+// Is there already a custom session with this exact setup (regardless of
+// its name)? Guide audio matches by file name — each pick copies the file
+// to a new path, so paths differ even for the same audio.
+export function findMatchingCustomSession(pinnedSessions, setup) {
+  const soundOn = (f) => f === 'both' || f === 'audio';
+  return (
+    pinnedSessions.find(
+      (p) =>
+        p.activityType === setup.activityType &&
+        soundOn(p.feedbackType) === soundOn(setup.feedbackType) &&
+        (p.duration || null) === (setup.duration || null) &&
+        (p.guideSource || null) === (setup.guideSource || null) &&
+        (setup.guideSource !== 'phone' || (p.guideName || '') === (setup.guideName || '')),
+    ) || null
+  );
+}
 
 function todayKey() {
   const d = new Date();
@@ -82,16 +130,14 @@ export async function savePinnedSession({ state, actions, navigation }) {
     }
     actions.updatePinnedSession(state.editingPinnedId, entry);
     nextPinned = state.pinnedSessions.map((s) => (s.id === state.editingPinnedId ? { ...s, ...entry } : s));
-  } else if (state.pinnedSessions.length < 3) {
-    actions.addPinnedSession(entry);
-    nextPinned = [...state.pinnedSessions, { ...entry, id: state.pinnedNextId }];
   } else {
-    // Replace oldest — also delete its guide-audio file, matching the original.
-    const oldest = state.pinnedSessions[0];
-    if (oldest?.guidePath) await deleteGuideAudioFile(oldest.guidePath);
-    actions.removePinnedSession(oldest.id);
-    actions.addPinnedSession(entry);
-    nextPinned = [...state.pinnedSessions.slice(1), { ...entry, id: state.pinnedNextId }];
+    // No cap on custom sessions any more (was 3, oldest replaced) — Home
+    // shows the two most recently used, the rest are on the Custom
+    // Sessions screen. A new one counts as just used, so it lists first.
+    const now = Date.now();
+    const created = { ...entry, createdAt: now, lastUsedAt: now };
+    actions.addPinnedSession(created);
+    nextPinned = [...state.pinnedSessions, { ...created, id: state.pinnedNextId }];
   }
 
   actions.setEditingPinnedId(null);
@@ -102,8 +148,34 @@ export async function savePinnedSession({ state, actions, navigation }) {
   // again, because the dispatches above haven't been applied to the store
   // yet when this line runs (dispatch is async) — state.pinnedSessions here
   // would still be the pre-save value.
-  await persistSave({ ...state, pinnedSessions: nextPinned });
-  navigation.navigate('home');
+  // pinnedNextId must advance in the snapshot too when a session was added —
+  // otherwise the stale counter is what gets persisted, and after an app
+  // restart the next new custom session reuses an existing id.
+  const added = state.editingPinnedId === null;
+  await persistSave({ ...state, pinnedSessions: nextPinned, pinnedNextId: added ? state.pinnedNextId + 1 : state.pinnedNextId });
+  goBackOrHome(navigation);
+}
+
+// TWENTY-FOURTH follow-up: Summary's "Save this setup" — saves a just-
+// finished session's setup (results.saveOffer) as a new custom session.
+// Returns { ok: true } or { ok: false, error } (empty or duplicate name).
+export async function saveSetupAsCustomSession({ state, actions, setup, name }) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return { ok: false, error: 'Please enter a name.' };
+  const key = trimmed.toLowerCase();
+  if (state.pinnedSessions.some((p) => (p.name || '').trim().toLowerCase() === key)) {
+    return { ok: false, error: `You already have a custom session named "${trimmed}".` };
+  }
+  const icons = ICON_MAP[setup.activityType] || ICON_MAP.meditative;
+  const now = Date.now();
+  const entry = { name: trimmed, ...setup, ...icons, createdAt: now, lastUsedAt: now };
+  actions.addPinnedSession(entry);
+  await persistSave({
+    ...state,
+    pinnedSessions: [...state.pinnedSessions, { ...entry, id: state.pinnedNextId }],
+    pinnedNextId: state.pinnedNextId + 1,
+  });
+  return { ok: true };
 }
 
 // Mirrors deletePinnedSession(id).
@@ -112,6 +184,39 @@ export async function deletePinnedSession({ state, actions }, id) {
   if (s?.guidePath) await deleteGuideAudioFile(s.guidePath);
   actions.removePinnedSession(id);
   await persistSave({ ...state, pinnedSessions: state.pinnedSessions.filter((p) => p.id !== id) });
+}
+
+// Starts a saved custom session (from Home or the Custom Sessions screen)
+// and records it as just used, which moves it to the top of the list.
+// Usage is only recorded when the session actually starts — startSession()
+// shows the "Not connected" alert and does nothing otherwise.
+export function startCustomSession({ state, actions, navigation, session }) {
+  if (state.isConnected) {
+    const now = Date.now();
+    actions.updatePinnedSession(session.id, { lastUsedAt: now });
+    persistSave({
+      ...state,
+      pinnedSessions: state.pinnedSessions.map((p) => (p.id === session.id ? { ...p, lastUsedAt: now } : p)),
+    });
+  }
+  startSession({
+    state,
+    actions,
+    navigation,
+    origin: 'custom',
+    customSessionId: session.id,
+    overrides: {
+      config: {
+        feedbackType: session.feedbackType,
+        activityType: session.activityType,
+        activityNote: '',
+        duration: session.duration,
+      },
+      guideMediaSource: session.guideSource || null,
+      guideMediaName: session.guideSource === 'phone' ? session.guideName || '' : '',
+      guideMediaPath: session.guideSource === 'phone' ? session.guidePath || null : null,
+    },
+  });
 }
 
 // state/actions come from useStore(); navigation from useNavigation().
@@ -152,6 +257,7 @@ export function startSimilarSession({ state, actions, navigation, session }) {
     state,
     actions,
     navigation,
+    origin: 'similar',
     overrides: {
       config: {
         feedbackType: session.feedbackType,
@@ -167,7 +273,9 @@ export function startSimilarSession({ state, actions, navigation, session }) {
   });
 }
 
-export function startSession({ state, actions, navigation, overrides }) {
+// `origin` — see currentSessionOrigin above. Defaults to 'setup' (Session
+// setup's Begin session passes nothing); every other caller passes its own.
+export function startSession({ state, actions, navigation, overrides, origin = 'setup', customSessionId = null }) {
   const effective = overrides
     ? {
         ...state,
@@ -195,14 +303,31 @@ export function startSession({ state, actions, navigation, overrides }) {
 
   // Auto-pin to Home if the user named this session but didn't explicitly save it
   const hasId = !!(effective.config.customName || '').trim() || !!(effective.config.activityNote || '').trim();
+  // No cap any more (was 3, oldest replaced). Since custom sessions can now
+  // accumulate, starting with a name that matches an existing custom
+  // session updates that one instead of adding a duplicate.
   if (hasId && effective.setupMode === 'start') {
-    if (effective.pinnedSessions.length >= 3) {
-      const oldest = effective.pinnedSessions[0];
-      if (oldest?.guidePath) deleteGuideAudioFile(oldest.guidePath);
-      actions.removePinnedSession(oldest.id);
+    const now = Date.now();
+    const entry = buildPinnedEntry(effective, null);
+    const key = entry.name.trim().toLowerCase();
+    const existing = effective.pinnedSessions.find((p) => (p.name || '').trim().toLowerCase() === key);
+    if (existing) {
+      if (existing.guidePath && existing.guidePath !== entry.guidePath) deleteGuideAudioFile(existing.guidePath);
+      actions.updatePinnedSession(existing.id, { ...entry, name: existing.name, lastUsedAt: now }); // keep its own name/capitalization
+    } else {
+      actions.addPinnedSession({ ...entry, createdAt: now, lastUsedAt: now });
     }
-    actions.addPinnedSession(buildPinnedEntry(effective, null));
   }
+
+  // TWENTY-FOURTH follow-up: Summary offers "Save this setup as a custom
+  // session?" only for a session started from Session setup that wasn't
+  // just auto-saved by name (above) and doesn't match an existing custom
+  // session's setup. Never for Quick Start, custom or "Start similar"
+  // sessions. The setup is captured now, as configured.
+  const autoSaved = hasId && effective.setupMode === 'start';
+  const setup = setupOf(effective);
+  const offer = origin === 'setup' && !autoSaved && !findMatchingCustomSession(effective.pinnedSessions, setup);
+  currentSessionOrigin = { origin, customSessionId, saveOffer: offer ? setup : null };
 
   actions.updateConfig({ customName: '', activityNote: '' });
   actions.setSetupMode('start');
@@ -272,10 +397,10 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   stopGuideTrack();
 
   // Intensity shift (start vs end of session) — unrelated to the
-  // SteadyPoint Score itself, kept as-is. Uses the same fullScaleG that
+  // session's median intensity, kept as-is. Uses the same fullScaleG that
   // was actually in effect for this session (set at startSession time),
   // not the default, so these numbers are consistent with the live
-  // display and the levelTrace used for the score below.
+  // display and the levelTrace used for intensity below.
   const sessionFullScaleG = live.getFullScaleG();
   // The tremor band actually in effect for this session (see startSession()
   // above) — persisted alongside fullScaleG for the same reason: so a
@@ -300,46 +425,18 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     reductionPct = startLevel > 0 ? Math.max(0, Math.round(((startLevel - endLevel) / startLevel) * 100)) : 0;
   }
 
-  // SteadyPoint Score — validity gate: a session is only scored if it has
-  // at least 10 tremor-level samples AND lasted at least 30 seconds.
-  // Otherwise score is invalid (displayed as "—" rather than a number).
-  const scoreValid = levelTrace.length >= 10 && secs >= 30;
-
-  let score = null,
-    steadiness = null,
-    consistency = null,
-    pctNone = null,
-    pctMild = null,
-    pctModerate = null,
-    pctHigh = null;
-
-  if (scoreValid) {
-    // Steadiness (85% of score): average "band credit" across the whole
-    // trace — None=1.0, Mild=0.7, Moderate=0.35, High=0.0.
-    const bandCredit = (level) => {
-      if (level < 20) return 1.0;
-      if (level < 45) return 0.7;
-      if (level < 70) return 0.35;
-      return 0.0;
-    };
-    steadiness = (levelTrace.reduce((s, l) => s + bandCredit(l), 0) / levelTrace.length) * 100;
-
-    // Consistency (15% of score): rewards a smooth, stable trace and
-    // penalizes erratic spikes.
-    const traceMean = levelTrace.reduce((s, l) => s + l, 0) / levelTrace.length;
-    const traceStd = Math.sqrt(levelTrace.reduce((s, l) => s + (l - traceMean) ** 2, 0) / levelTrace.length);
-    consistency = Math.max(0, Math.min(100, 100 - traceStd * 1.5));
-
-    score = Math.max(0, Math.min(100, Math.round(0.85 * steadiness + 0.15 * consistency)));
-
-    // Band percentages — what fraction of the session was spent in each
-    // tremor band. Feeds the Analytics "Time in Bands" panel.
-    const n = levelTrace.length;
-    pctNone = Math.round((levelTrace.filter((l) => l < 20).length / n) * 100);
-    pctMild = Math.round((levelTrace.filter((l) => l >= 20 && l < 45).length / n) * 100);
-    pctModerate = Math.round((levelTrace.filter((l) => l >= 45 && l < 70).length / n) * 100);
-    pctHigh = Math.round((levelTrace.filter((l) => l >= 70).length / n) * 100);
-  }
+  // Validity gate (unchanged from the old SteadyPoint Score): a session is
+  // only measured if it has at least 10 tremor-level samples AND lasted at
+  // least 30 seconds. Otherwise it shows "—" (see utils/intensityStats.js).
+  //
+  // TWENTY-EIGHTH follow-up: the SteadyPoint Score (steadiness/consistency
+  // blend) and its separate pctNone..pctHigh fields are gone. Sessions are
+  // described by their median intensity and time in each band, computed
+  // from the full-resolution trace. Older saved records keep their score
+  // fields; sessionIntensity() still reads them for backwards compatibility.
+  const intensityValid = levelTrace.length >= 10 && secs >= 30;
+  const medianIntensity = intensityValid ? Math.round(median(levelTrace)) : null;
+  const bandPct = intensityValid ? bandPercentages(levelTrace) : null;
 
   const liveState = live.getLiveState();
   // Mirrors the id the ADD_SESSION reducer case will assign — computed here
@@ -348,26 +445,27 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   const sessionId = state.todaySessionNextId;
   const results = {
     sessionId,
-    score,
-    scoreValid,
-    steadiness,
-    consistency,
-    pctNone,
-    pctMild,
-    pctModerate,
-    pctHigh,
     reduction: reductionPct,
     fullScaleG: sessionFullScaleG,
     startLevel,
     endLevel,
     duration: Math.max(1, Math.round(secs / 60)),
-    peakFreq: liveState.liveFreqHz > 0 ? liveState.liveFreqHz : 5.7,
+    // TWENTY-EIGHTH follow-up: null when no dominant frequency was detected
+    // (was a 5.7 Hz placeholder, which then showed up as real data).
+    peakFreq: liveState.liveFreqHz > 0 ? liveState.liveFreqHz : null,
     samples: sessionBuffer.length,
     intensityTrace: downsampleTrace(levelTrace),
+    intensityValid,
+    medianIntensity,
+    bandPct,
+    // TWENTY-FOURTH follow-up — see currentSessionOrigin. saveOffer is the
+    // setup Summary offers to save (null = don't offer).
+    origin: currentSessionOrigin.origin,
+    customSessionId: currentSessionOrigin.customSessionId,
+    saveOffer: currentSessionOrigin.saveOffer,
   };
 
   actions.setResults(results);
-  actions.recordCompletedSession(results.score, results.duration, state.config.activityType);
 
   const now = new Date();
   const hh = now.getHours(),
@@ -387,14 +485,6 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     date: 'Today',
     time: timeStr,
     label: sessionLabel,
-    score: results.score,
-    scoreValid: results.scoreValid,
-    steadiness: results.steadiness,
-    consistency: results.consistency,
-    pctNone: results.pctNone,
-    pctMild: results.pctMild,
-    pctModerate: results.pctModerate,
-    pctHigh: results.pctHigh,
     reduction: results.reduction,
     fullScaleG: results.fullScaleG,
     tremorBandMinHz: sessionTremorBandMinHz,
@@ -405,6 +495,9 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     freq: results.peakFreq,
     samples: results.samples,
     intensityTrace: results.intensityTrace,
+    intensityValid: results.intensityValid, // TWENTY-SIXTH follow-up
+    medianIntensity: results.medianIntensity,
+    bandPct: results.bandPct,
     startLevel: results.startLevel,
     endLevel: results.endLevel,
     activityType: state.config.activityType,
@@ -418,13 +511,15 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     // since those were the only ways new pinned entries got created).
     guidePath: state.guideMediaSource === 'phone' ? state.guideMediaPath : null,
     guideName: state.guideMediaSource === 'phone' ? state.guideMediaName : '',
+    origin: currentSessionOrigin.origin, // TWENTY-FOURTH follow-up: 'setup' | 'quickStart' | 'custom' | 'similar'
+    customSessionId: currentSessionOrigin.customSessionId,
     endReason: disconnected ? 'disconnected' : 'completed',
     statusMessage: disconnected
       ? 'Session ended early — the app lost connection to your M5Stick device.'
       : null,
   });
 
-  // persistSave needs the *next* state (post addSession/recordCompletedSession),
+  // persistSave needs the *next* state (post addSession),
   // so callers should trigger a save shortly after dispatch settles — see
   // RecordingScreen's useEffect on state.allSessions for the actual save call.
 

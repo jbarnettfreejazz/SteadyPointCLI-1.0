@@ -28,17 +28,22 @@ export default function SetupScreen() {
   const disabled = (notConnected || needsAudio) && !isSaveMode;
   const btnLabel = notConnected ? 'Connect device to begin' : needsAudio ? 'Select audio to begin' : 'Begin session';
   const hasId = !!(state.config.customName || '').trim() || !!(state.config.activityNote || '').trim();
-  const atCapacity = state.pinnedSessions.length >= 3 && !isEditing;
+  // Setup can be opened from Home or (to edit) from the Custom Sessions
+  // screen — Back/Cancel return to whichever one opened it.
+  const leave = () => {
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate('home');
+  };
 
   const handleBack = () => {
     actions.setSetupMode('start');
-    navigation.navigate('home');
+    leave();
   };
 
   const handleCancel = () => {
     actions.setSetupMode('start');
     actions.updateConfig({ customName: '' });
-    navigation.navigate('home');
+    leave();
   };
 
   const handleToggleGuideCard = async (source) => {
@@ -247,9 +252,8 @@ export default function SetupScreen() {
                 actions.setSetupMode('save');
                 actions.setEditingPinnedId(null);
               }}
-              disabled={atCapacity}
-              style={[styles.secondaryButton, { backgroundColor: c.bg2, borderColor: c.bd2, opacity: atCapacity ? 0.5 : 1 }]}>
-              <Text style={{ color: c.tx1, fontWeight: '700' }}>Save to Home{atCapacity ? ' (full)' : ''}</Text>
+              style={[styles.secondaryButton, { backgroundColor: c.bg2, borderColor: c.bd2 }]}>
+              <Text style={{ color: c.tx1, fontWeight: '700' }}>Save to Home</Text>
             </Pressable>
           </>
         )}

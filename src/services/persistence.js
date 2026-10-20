@@ -10,6 +10,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export const SP_KEYS = {
   meta: 'sp_meta',
   pinned: 'sp_pinnedSessions',
+  // TWENTY-EIGHTH follow-up: no longer written (it only held per-day
+  // SteadyPoint Score totals, which nothing read). Kept so persistLoad can
+  // remove the old entry from storage.
   analytics: 'sp_analyticsData',
   settings: 'sp_settings',
   sessions: 'sp_allSessions',
@@ -25,7 +28,6 @@ export async function persistSave(state) {
     // Blob/ObjectURL pair, so there's nothing transient to strip before save.
     await AsyncStorage.multiSet([
       [SP_KEYS.pinned, JSON.stringify(state.pinnedSessions)],
-      [SP_KEYS.analytics, JSON.stringify(state.analyticsData)],
       [SP_KEYS.settings, JSON.stringify(state.settings)],
       [SP_KEYS.sessions, JSON.stringify(state.allSessions)],
       [SP_KEYS.mode, state.appMode],
@@ -56,6 +58,7 @@ export async function persistLoad() {
       SP_KEYS.meta,
     ]);
     const map = Object.fromEntries(entries);
+    if (map[SP_KEYS.analytics]) AsyncStorage.removeItem(SP_KEYS.analytics).catch(() => {});
     if (!map[SP_KEYS.meta]) return null; // nothing saved yet
 
     let pinnedSessions = map[SP_KEYS.pinned] ? JSON.parse(map[SP_KEYS.pinned]) : [];
@@ -138,7 +141,6 @@ export async function persistLoad() {
 
     return {
       pinnedSessions,
-      analyticsData: map[SP_KEYS.analytics] ? JSON.parse(map[SP_KEYS.analytics]) : null,
       settings,
       allSessions,
       appMode: map[SP_KEYS.mode] || 'real',

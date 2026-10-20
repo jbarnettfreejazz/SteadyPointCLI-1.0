@@ -1,5 +1,5 @@
 import * as T from './actionTypes';
-import { buildInitialState, demoAnalyticsData, emptyAnalyticsData } from './initialState';
+import { buildInitialState } from './initialState';
 
 export function appReducer(state, action) {
   switch (action.type) {
@@ -69,7 +69,8 @@ export function appReducer(state, action) {
       const session = { ...action.session, id: state.pinnedNextId };
       return {
         ...state,
-        pinnedSessions: [...state.pinnedSessions, session].slice(0, 3),
+        // No cap (was .slice(0, 3)) — see savePinnedSession() in sessionLogic.js.
+        pinnedSessions: [...state.pinnedSessions, session],
         pinnedNextId: state.pinnedNextId + 1,
       };
     }
@@ -87,33 +88,6 @@ export function appReducer(state, action) {
         ...state,
         pinnedSessions: state.pinnedSessions.filter((s) => s.id !== action.id),
       };
-
-    case T.RECORD_COMPLETED_SESSION: {
-      const { score, durationMins, activityType } = action;
-      const analytics = { ...state.analyticsData };
-      analytics.totalSessions += 1;
-      analytics.totalMins += durationMins;
-
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      const key = d.toISOString().slice(0, 10);
-      const weeklyScores = { ...analytics.weeklyScores };
-      const existing = weeklyScores[key] || { scores: [], totalMins: 0, sessions: 0 };
-      weeklyScores[key] = {
-        scores: [...existing.scores, score],
-        totalMins: existing.totalMins + durationMins,
-        sessions: existing.sessions + 1,
-      };
-      analytics.weeklyScores = weeklyScores;
-
-      const type = activityType || 'meditative';
-      const activityAvgs = { ...analytics.activityAvgs };
-      const prevAvg = activityAvgs[type] || { sum: 0, count: 0 };
-      activityAvgs[type] = { sum: prevAvg.sum + score, count: prevAvg.count + 1 };
-      analytics.activityAvgs = activityAvgs;
-
-      return { ...state, analyticsData: analytics };
-    }
 
     case T.ADD_SESSION: {
       const session = { ...action.session, id: state.todaySessionNextId };

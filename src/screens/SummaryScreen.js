@@ -14,9 +14,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
-import ScoreRing from '../components/ScoreRing';
+import { MedianIntensityRing, TimeInBands } from '../components/IntensityDisplay';
+import { sessionIntensity, intensityHeadline } from '../utils/intensityStats';
 import IntensityChart from '../components/IntensityChart';
 import { persistSave } from '../services/persistence';
+import { saveSetupAsCustomSession } from '../services/sessionLogic';
+import { describeCustomSession } from '../utils/customSessions';
 
 export default function SummaryScreen() {
   const c = useTheme();
@@ -26,6 +29,14 @@ export default function SummaryScreen() {
   const [note, setNote] = useState('');
   const [noteModalVisible, setNoteModalVisible] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
+  // TWENTY-FOURTH follow-up: "Save this setup as a custom session?" card —
+  // shown only when endSession() set results.saveOffer (session started from
+  // Session setup, not already saved, no matching custom session).
+  const [saveCard, setSaveCard] = useState('offer'); // 'offer' | 'dismissed' | 'saved'
+  const [saveModalVisible, setSaveModalVisible] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [savedName, setSavedName] = useState('');
 
   // state.scoreAnim is toggled true ~450ms after arriving here by
   // endSession() in sessionLogic.js, driving the ring's fill-in.
@@ -35,6 +46,8 @@ export default function SummaryScreen() {
     return null;
   }
 
+  const intensity = sessionIntensity(r);
+
   const insight =
     r.reduction >= 30
       ? `Your tremor intensity fell ${r.reduction}% — a strong parasympathetic response. Consistent practice deepens this effect.`
@@ -43,7 +56,7 @@ export default function SummaryScreen() {
       : 'Early in your practice. Even small reductions train the neural pathways that lead to larger shifts over time.';
 
   const stats = [
-    { label: 'DOMINANT FREQ', val: `${typeof r.peakFreq === 'number' ? r.peakFreq.toFixed(1) : r.peakFreq} Hz`, sub: 'peak signal', hi: false },
+    { label: 'DOMINANT FREQ', val: typeof r.peakFreq === 'number' && r.peakFreq > 0 ? `${r.peakFreq.toFixed(1)} Hz` : '—', sub: r.peakFreq > 0 ? 'peak signal' : 'none detected', hi: false },
     { label: 'DURATION', val: `${r.duration} min`, sub: 'session length', hi: false },
   ];
 
@@ -59,6 +72,22 @@ export default function SummaryScreen() {
 
   const cancelNoteDraft = () => {
     setNoteModalVisible(false); // discard noteDraft — committed `note` is untouched
+  };
+
+  const openSaveModal = () => {
+    setSaveError('');
+    setSaveModalVisible(true);
+  };
+
+  const confirmSaveSetup = async () => {
+    const result = await saveSetupAsCustomSession({ state, actions, setup: r.saveOffer, name: nameDraft });
+    if (!result.ok) {
+      setSaveError(result.error);
+      return;
+    }
+    setSavedName(nameDraft.trim());
+    setSaveCard('saved');
+    setSaveModalVisible(false);
   };
 
   const handleReturnHome = async () => {
@@ -79,22 +108,13 @@ export default function SummaryScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <Text style={{ fontSize: 10, letterSpacing: 1, color: c.tx3, marginBottom: 4 }}>SESSION COMPLETE</Text>
         <Text style={[styles.headline, { color: c.tx1 }]}>
-          {r.score == null ? 'Session too short to score.' : r.score >= 70 ? 'Well done.' : 'Good effort.'}
+          {intensityHeadline(intensity)}
         </Text>
 
-        <View style={styles.ringWrap}>
-          <ScoreRing
-            size={128}
-            strokeWidth={7}
-            score={state.scoreAnim ? r.score || 0 : 0}
-            color={c.info}
-            trackColor={c.bd3}
-            centerLabel={r.score != null ? r.score : '—'}
-            subLabel="STEADYPOINT"
-            textColor={c.tx1}
-            subTextColor={c.tx3}
-          />
-        </View>
+        {/* TWENTY-SIXTH follow-up: median intensity + time in each band
+            replace the SteadyPoint Score ring. */}
+        <MedianIntensityRing info={intensity} c={c} animate={state.scoreAnim} />
+        <TimeInBands info={intensity} c={c} />
 
         <View style={styles.statsGrid}>
           {stats.map((s) => (
@@ -121,6 +141,32 @@ export default function SummaryScreen() {
         <View style={[styles.insightBox, { backgroundColor: c.bgInfo, borderColor: c.bdInfo }]}>
           <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 20 }}>{insight}</Text>
         </View>
+
+        {!!r.saveOffer && saveCard === 'offer' && (
+          <View style={[styles.saveCard, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: c.tx1, marginBottom: 4 }}>Save this setup?</Text>
+            <Text style={{ fontSize: 12, color: c.tx2, marginBottom: 12 }}>
+              Save it as a custom session to start it again from Home with one tap.
+            </Text>
+            <Text style={{ fontSize: 12, color: c.tx3, marginBottom: 14 }}>{describeCustomSession(r.saveOffer)}</Text>
+            <View style={styles.saveCardButtons}>
+              <Pressable onPress={openSaveModal} style={[styles.saveButton, { backgroundColor: c.tx1 }]}>
+                <Text style={{ color: c.bg1, fontWeight: '700', fontSize: 13 }}>Save as custom session</Text>
+              </Pressable>
+              <Pressable onPress={() => setSaveCard('dismissed')} hitSlop={8} style={styles.notNowButton}>
+                <Text style={{ color: c.tx2, fontSize: 13 }}>Not now</Text>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {saveCard === 'saved' && (
+          <View style={[styles.saveCard, { backgroundColor: c.bgSuccess, borderColor: c.bd3 }]}>
+            <Text style={{ fontSize: 13, color: c.success, fontWeight: '600' }}>
+              ✓ Saved "{savedName}" to Custom Sessions
+            </Text>
+          </View>
+        )}
 
         <Text style={[styles.label, { color: c.tx3 }]}>NOTE</Text>
         <Pressable onPress={openNoteModal} style={[styles.noteRow, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
@@ -168,6 +214,48 @@ export default function SummaryScreen() {
           </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
+
+      {/* Name entry for "Save as custom session" — its own sheet with the
+          field near the top, same reason as the note editor above. */}
+      <Modal
+        visible={saveModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSaveModalVisible(false)}>
+        <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <View style={styles.modalHeader}>
+              <Pressable onPress={() => setSaveModalVisible(false)} hitSlop={8}>
+                <Text style={{ fontSize: 15, color: c.tx2 }}>Cancel</Text>
+              </Pressable>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: c.tx1 }}>Custom Session</Text>
+              <Pressable onPress={confirmSaveSetup} disabled={!nameDraft.trim()} hitSlop={8}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: nameDraft.trim() ? c.info : c.tx3 }}>Save</Text>
+              </Pressable>
+            </View>
+            <View style={{ paddingHorizontal: 18 }}>
+              <Text style={[styles.label, { color: c.tx3, marginTop: 8 }]}>SESSION NAME</Text>
+              <TextInput
+                value={nameDraft}
+                onChangeText={(t) => {
+                  setNameDraft(t);
+                  if (saveError) setSaveError('');
+                }}
+                placeholder="e.g. Morning meditation"
+                placeholderTextColor={c.tx3}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={() => nameDraft.trim() && confirmSaveSetup()}
+                style={[styles.nameInput, { color: c.tx1, borderColor: c.bd3, backgroundColor: c.bg1 }]}
+              />
+              {!!saveError && <Text style={{ color: c.danger, fontSize: 12, marginTop: 8 }}>{saveError}</Text>}
+              {!!r.saveOffer && (
+                <Text style={{ color: c.tx3, fontSize: 12, marginTop: 12 }}>{describeCustomSession(r.saveOffer)}</Text>
+              )}
+            </View>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -176,7 +264,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { padding: 20, paddingBottom: 40 },
   headline: { fontSize: 20, fontWeight: '500', marginBottom: 20 },
-  ringWrap: { alignItems: 'center', marginBottom: 24 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
   chartWrap: { marginBottom: 14 },
   statBox: { width: '47%', borderRadius: radii.md, padding: 12 },
@@ -193,4 +280,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   modalTextarea: { flex: 1, padding: 18, fontSize: 16, lineHeight: 24 },
+  saveCard: { borderWidth: 1, borderRadius: radii.lg, padding: 14, marginBottom: 20 },
+  saveCardButtons: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  saveButton: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: radii.md },
+  notNowButton: { paddingVertical: 10 },
+  nameInput: { borderWidth: 1, borderRadius: radii.md, paddingHorizontal: 12, paddingVertical: 12, fontSize: 16 },
 });

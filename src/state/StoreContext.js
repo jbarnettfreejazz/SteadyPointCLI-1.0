@@ -36,8 +36,6 @@ export function StoreProvider({ children, initialMode = 'real' }) {
       updatePinnedSession: (id, patch) => dispatch({ type: T.UPDATE_PINNED_SESSION, id, patch }),
       removePinnedSession: (id) => dispatch({ type: T.REMOVE_PINNED_SESSION, id }),
 
-      recordCompletedSession: (score, durationMins, activityType) =>
-        dispatch({ type: T.RECORD_COMPLETED_SESSION, score, durationMins, activityType }),
       addSession: (session) => dispatch({ type: T.ADD_SESSION, session }),
       updateSession: (id, patch) => dispatch({ type: T.UPDATE_SESSION, id, patch }),
 

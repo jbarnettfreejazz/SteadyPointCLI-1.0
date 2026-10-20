@@ -10,6 +10,7 @@ import SummaryScreen from '../screens/SummaryScreen';
 import DisconnectedScreen from '../screens/DisconnectedScreen';
 import SessionDetailScreen from '../screens/SessionDetailScreen';
 import SessionHistoryScreen from '../screens/SessionHistoryScreen';
+import CustomSessionsScreen from '../screens/CustomSessionsScreen';
 import ArticleScreen from '../screens/ArticleScreen';
 import CalibrationWelcomeScreen from '../screens/CalibrationWelcomeScreen';
 import CalibrationScreen from '../screens/CalibrationScreen';
@@ -43,6 +44,7 @@ export default function RootNavigator() {
         <Stack.Screen name="disconnected" component={DisconnectedScreen} />
         <Stack.Screen name="sessionDetail" component={SessionDetailScreen} />
         <Stack.Screen name="sessionHistory" component={SessionHistoryScreen} />
+        <Stack.Screen name="customSessions" component={CustomSessionsScreen} />
         <Stack.Screen name="article" component={ArticleScreen} />
         <Stack.Screen name="calibrationWelcome" component={CalibrationWelcomeScreen} />
         <Stack.Screen name="calibration" component={CalibrationScreen} />
