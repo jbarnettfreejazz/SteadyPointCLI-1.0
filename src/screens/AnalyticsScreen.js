@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { startSimilarSession } from '../services/sessionLogic';
-import { bandFor, INTENSITY_BANDS } from '../utils/intensityStats';
+import { bandFor, INTENSITY_BANDS, displayScale } from '../utils/intensityStats';
 import {
   PERIODS,
   ACTIVITY_TYPES,
@@ -45,12 +45,16 @@ export default function AnalyticsScreen() {
   const [trendType, setTrendType] = useState('all');
   const [trendMenuOpen, setTrendMenuOpen] = useState(false);
   const [bandsView, setBandsView] = useState('bars');
+  // THIRTY-SECOND follow-up: 'band' (tremor band) or 'all' (All motion).
+  const [trendView, setTrendView] = useState('band');
 
   const period = PERIODS.find((p) => p.key === periodKey);
-  const items = useMemo(() => periodSessions(state.allSessions, periodKey), [state.allSessions, periodKey]);
+  // THIRTIETH follow-up: every session on the current full scale / noise floor.
+  const scale = useMemo(() => displayScale(state.settings), [state.settings]);
+  const items = useMemo(() => periodSessions(state.allSessions, periodKey, scale), [state.allSessions, periodKey, scale]);
   const ov = overview(items);
   const calmest = calmestSession(items, calmType);
-  const trend = intensityTrend(items, trendType);
+  const trend = intensityTrend(items, trendType, { view: trendView, scale });
   const bands = bandsOverTime(items);
   const activity = byActivity(items);
   const sg = soundAndGuide(items);
@@ -187,7 +191,25 @@ export default function AnalyticsScreen() {
               ))}
             </View>
           )}
-          <IntensityTrendChart trend={trend} c={c} />
+          {/* THIRTY-SECOND follow-up: tremor band vs all motion */}
+          <View style={[styles.miniSegment, { backgroundColor: c.bg1, borderColor: c.bd3, alignSelf: 'flex-start', marginLeft: 0, marginBottom: 8 }]}>
+            {[
+              { key: 'band', label: 'Tremor band' },
+              { key: 'all', label: 'All motion' },
+            ].map((v) => {
+              const on = v.key === trendView;
+              return (
+                <Pressable key={v.key} onPress={() => setTrendView(v.key)} style={[styles.miniSegItem, on && { backgroundColor: c.info }]}>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: on ? '#ffffff' : c.tx2 }}>{v.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <IntensityTrendChart
+            trend={trend}
+            c={c}
+            emptyText={trendView === 'all' ? 'No sessions with all-motion data in this period' : undefined}
+          />
           <View style={styles.legend}>
             <View style={styles.legendItem}>
               <View style={[styles.dot, { backgroundColor: c.tx3 }]} />
@@ -197,13 +219,25 @@ export default function AnalyticsScreen() {
               <View style={[styles.lineKey, { backgroundColor: c.info }]} />
               <Text style={{ fontSize: 11, color: c.tx2 }}>3-session avg</Text>
             </View>
-            {trend.markers.length > 0 && (
+            {trend.markers.some((m) => m.kind === 'note') && (
               <View style={styles.legendItem}>
                 <View style={[styles.markerKey, { backgroundColor: c.info }]} />
                 <Text style={{ fontSize: 11, color: c.tx2 }}>Session note</Text>
               </View>
             )}
+            {trend.markers.some((m) => m.kind === 'band') && (
+              <View style={styles.legendItem}>
+                <View style={[styles.markerKey, { backgroundColor: c.tx3 }]} />
+                <Text style={{ fontSize: 11, color: c.tx2 }}>Band change</Text>
+              </View>
+            )}
           </View>
+          {trendView === 'all' && (
+            <Text style={{ fontSize: 11, color: c.tx3, marginTop: 8 }}>
+              All motion counts every frequency, including voluntary movement, so it reads higher than tremor-band intensity
+              but stays comparable across band changes. Available for sessions recorded from this update on.
+            </Text>
+          )}
         </View>
 
         {/* Time in bands */}

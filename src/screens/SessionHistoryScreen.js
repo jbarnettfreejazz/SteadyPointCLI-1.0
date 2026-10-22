@@ -5,13 +5,14 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { getTodaySessions, groupPastSessionsByDay } from '../utils/sessionStats';
-import { sessionIntensity } from '../utils/intensityStats';
+import { sessionIntensity, displayScale } from '../utils/intensityStats';
 
 export default function SessionHistoryScreen() {
   const c = useTheme();
   const navigation = useNavigation();
   const { state, actions } = useStore();
   const allSessions = state.allSessions;
+  const scale = displayScale(state.settings); // THIRTIETH follow-up — current scale
 
   const todayLive = getTodaySessions(allSessions);
   const pastGroups = groupPastSessionsByDay(allSessions);
@@ -56,14 +57,14 @@ export default function SessionHistoryScreen() {
         {todayLive.length === 0 ? (
           <Text style={{ fontSize: 13, color: c.tx3, paddingVertical: 8 }}>No sessions today yet</Text>
         ) : (
-          todayLive.map((s) => <SessionRow key={s.id} s={s} c={c} onPress={() => openSession(s)} />)
+          todayLive.map((s) => <SessionRow key={s.id} s={s} c={c} scale={scale} onPress={() => openSession(s)} />)
         )}
 
         {pastGroups.map((group) => (
           <View key={group.dateKey}>
             <Text style={[styles.dayLabel, { color: c.tx3 }]}>{group.label.toUpperCase()}</Text>
             {group.sessions.map((s) => (
-              <SessionRow key={s.id} s={s} c={c} onPress={() => openSession(s)} />
+              <SessionRow key={s.id} s={s} c={c} scale={scale} onPress={() => openSession(s)} />
             ))}
           </View>
         ))}
@@ -76,12 +77,12 @@ export default function SessionHistoryScreen() {
   );
 }
 
-function SessionRow({ s, c, onPress }) {
+function SessionRow({ s, c, scale, onPress }) {
   const guide = s.guideSource ? s.guideSource.charAt(0).toUpperCase() + s.guideSource.slice(1) : 'No guide';
   const act = s.activityType ? s.activityType.charAt(0).toUpperCase() + s.activityType.slice(1) : '';
   // TWENTY-SIXTH follow-up: badge shows median intensity, coloured by band
   // (was the SteadyPoint Score).
-  const info = sessionIntensity(s);
+  const info = sessionIntensity(s, scale);
   return (
     <Pressable onPress={onPress} style={styles.sessRow}>
       <View style={[styles.scoreBadge, { backgroundColor: info.valid ? c[info.band.bg] : c.bg2 }]}>

@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { MedianIntensityRing, TimeInBands } from '../components/IntensityDisplay';
-import { sessionIntensity } from '../utils/intensityStats';
+import { sessionIntensity, sessionTrace, sessionReduction, displayScale, sessionScale } from '../utils/intensityStats';
 import IntensityChart from '../components/IntensityChart';
 import { sessionInsight } from '../utils/sessionStats';
 import { startSimilarSession } from '../services/sessionLogic';
@@ -26,7 +26,10 @@ export default function SessionDetailScreen() {
   const sound = s.feedbackType === 'both' || s.feedbackType === 'audio' ? 'Sound on' : 'No sound';
   const tags = [act, `${s.duration} min`, sound, guide];
 
-  const intensity = sessionIntensity(s);
+  // THIRTIETH follow-up: shown on the current full scale / noise floor.
+  const scale = displayScale(state.settings);
+  const intensity = sessionIntensity(s, scale);
+  const measured = sessionScale(s); // THIRTY-THIRD follow-up — what it was measured with
 
   const stats = [
     { label: 'DOMINANT FREQ', val: typeof s.freq === 'number' && s.freq > 0 ? `${s.freq.toFixed(1)} Hz` : '—', sub: s.freq > 0 ? 'peak signal' : 'none detected', hi: false },
@@ -82,7 +85,7 @@ export default function SessionDetailScreen() {
         </View>
 
         <View style={styles.chartWrap}>
-          <IntensityChart trace={s.intensityTrace} durationSec={s.duration * 60} colors={c} />
+          <IntensityChart trace={sessionTrace(s, scale)} durationSec={s.duration * 60} colors={c} />
         </View>
 
         {s.samples > 0 && (
@@ -101,14 +104,28 @@ export default function SessionDetailScreen() {
         )}
 
         <View style={[styles.insightBox, { backgroundColor: c.bgInfo, borderColor: c.bdInfo }]}>
-          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 20 }}>{sessionInsight(s.reduction)}</Text>
+          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 20 }}>{sessionInsight(sessionReduction(s, scale))}</Text>
         </View>
 
-        {s.fullScaleG != null && (
-          <Text style={{ fontSize: 11, color: c.tx3, textAlign: 'center', marginBottom: 16 }}>
-            Calibrated to {s.fullScaleG}g full-scale
+        {/* THIRTY-THIRD follow-up: the settings this session was measured with
+            (replaces "Calibrated to Xg full-scale"). Sessions saved before the
+            noise floor was recorded all used 0.006 g; before band filtering
+            was recorded, none were filtered. */}
+        <View style={{ alignItems: 'center', marginBottom: 16, gap: 2 }}>
+          <Text style={{ fontSize: 11, color: c.tx3, textAlign: 'center' }}>
+            Measured with {measured.fullScaleG}g full scale · {measured.noiseFloorG}g noise floor
           </Text>
-        )}
+          <Text style={{ fontSize: 11, color: c.tx3, textAlign: 'center' }}>
+            {s.tremorBandFiltered && typeof s.tremorBandMinHz === 'number' && typeof s.tremorBandMaxHz === 'number'
+              ? `Band filter: ${s.tremorBandMinHz.toFixed(1)}–${s.tremorBandMaxHz.toFixed(1)} Hz`
+              : 'Band filter: off (all frequencies)'}
+          </Text>
+          {intensity.rescaled && (
+            <Text style={{ fontSize: 11, color: c.tx3, textAlign: 'center' }}>
+              Shown on your current {scale.fullScaleG}g full scale · {scale.noiseFloorG}g noise floor
+            </Text>
+          )}
+        </View>
 
         <Pressable
           onPress={() => startSimilarSession({ state, actions, navigation, session: s })}

@@ -2342,6 +2342,119 @@ same four bands and colours as everywhere else):
   `components/WeeklyBarChart.js`. `ScoreRing` stays — it's the generic ring
   used for median intensity.
 
+## Twenty-ninth follow-up — noise floor setting now applied
+
+`settings.noiseFloorG` (NOISE_FLOOR_G) was saved but never used: live
+intensity always used dsp.js's built-in 0.006 g. It's now applied the same
+way as full scale:
+- `startSession` passes it to the new `liveSession.setNoiseFloorG()` (after
+  `setFullScaleG()`), fixed for the whole session; `updateLiveMetrics` and
+  the start/end levels in `endSession` use it.
+- Validated: a missing, negative, or at/above-full-scale value falls back to
+  0.006 g (or half of full scale if full scale is tiny). `rmsToLevel()` also
+  guards against a floor at/above full scale.
+- Each session record now stores the `noiseFloorG` it used, alongside
+  `fullScaleG` and the tremor band, so every session is self-describing.
+  Older records have no `noiseFloorG`; they were all measured at 0.006 g.
+
+No visible change for anyone today: every user's setting is still the
+default 0.006 g (there's no UI to edit it yet).
+
+## Thirtieth follow-up — past sessions shown on the current scale
+
+Every screen now shows every session on the user's **current** full scale
+and noise floor, so sessions stay comparable after those settings change.
+This is a display-time conversion only — saved sessions are never modified,
+so history simply follows whatever the settings are now.
+
+- **How:** a saved 0–100 reading is turned back into the motion (g) it came
+  from using the scale it was measured on (the session's stored `fullScaleG`,
+  and `noiseFloorG` or 0.006 g for sessions saved before that field existed),
+  then re-scored on the current settings. `utils/intensityStats.js`:
+  `displayScale`, `sessionScale`, `rescaleLevel`, `sessionTrace`,
+  `sessionReduction`, and an optional `scale` argument to `sessionIntensity`.
+- **Where:** Home (ring, bars, 7-day average), Session History badges,
+  Session Detail and Summary (ring, time in bands, intensity chart,
+  start-vs-end reduction text), and every Analytics section.
+- **Accuracy:** the median is converted exactly (the conversion keeps the
+  order of readings). Time in each band is recomputed from the saved
+  ~150-point trace, so it's approximate — typically within a few percent.
+  Readings pinned at 0 or 100 are only a bound and are converted as if they
+  sat exactly on it. Sessions on the same settings as today are unchanged.
+- **Assumption (agreed):** the frequency band hasn't changed across saved
+  sessions — band changes alter what's measured and can't be converted. The
+  Analytics intensity chart now marks any point where band filtering
+  switched on/off ("Band filter on", e.g. a first Calibration Mode run) or
+  the band changed ("Band changed"), as grey outlined markers alongside the
+  blue note markers, with a "Band change" legend entry. Band-change labels
+  take priority over note labels when they'd overlap.
+
+## Thirty-first follow-up — motion (g) saved with every session
+
+Each new session now also saves the motion behind its readings, in g, so
+future comparisons aren't limited by the 0–100 scale or by band changes.
+**Saving only — nothing displays these yet.**
+
+- `rmsTraceG`: the value each 0–100 reading was scored from (in-band when
+  band filtering is on, otherwise broadband). Makes full-scale / noise-floor
+  conversion exact, including readings that were pinned at 0 or 100.
+- `rmsAllTraceG`: all-frequencies (broadband) motion, which depends on no
+  calibration setting (full scale, noise floor or band) — comparable across
+  every session from now on, including across band changes. Note it also
+  includes voluntary movement, which the band normally filters out.
+- Both are recorded on every 300 ms metrics tick alongside `levelTrace`
+  (`liveSession.js` `updateLiveMetrics()`; broadband RMS is now always
+  computed) and saved downsampled the same way as `intensityTrace`, so entry
+  *i* of all three traces is the same moment. Values are rounded to
+  0.0001 g; about 300 extra numbers per session.
+- Sessions saved before this change don't have these fields.
+
+## Thirty-second follow-up — exact rescaling, same-band trends, All motion view
+
+**Exact rescaling for new sessions.** When a session has the saved motion
+trace (`rmsTraceG`, from the thirty-first follow-up), converting it to the
+current full scale / noise floor now re-scores the saved g values directly:
+exact, no 0/100 pinning, no whole-number coarseness. Used for the intensity
+chart and time in each band, and for the median when the stored median was
+itself pinned at 0 or 100. Older sessions keep the 0–100 conversion.
+
+**Trend comparisons stay within one band.** A band change alters what's
+measured, so the Analytics subtitles now only compare sessions measured on
+the same band as the most recent one:
+- Intensity: "Avg down from X to Y **since band change**" (or
+  "Avg N · 1 session since band change").
+- Time in bands: "High time down from X% to Y% since band change".
+- With no band change in view, the wording is unchanged.
+- Also fixed: with fewer than 6 sessions, the "first 3 vs last 3" averages
+  overlapped (3 sessions always read as "steady"). Each end now uses up to
+  3 sessions without overlapping (e.g. 4 sessions → first 2 vs last 2).
+
+**All motion view.** The intensity chart has a **Tremor band / All motion**
+toggle. All motion plots each session's median on all frequencies
+(`rmsAllTraceG`, scored on the current full scale / noise floor): it
+includes voluntary movement, so it reads higher, but it's unaffected by band
+changes, so it compares across everything (no band-change markers; note
+markers still shown; subtitle compares the whole period). Only sessions
+recorded since the thirty-first follow-up have this data — older ones are
+left out, with an empty-state message when none are in the period and a
+short explanatory caption under the chart.
+
+## Thirty-third follow-up — band filtering shown in Settings and Session Detail
+
+- **Settings → Tremor Measurement:** new "Band filtering" row — "On since
+  Oct 20, 2026" (from `settings.lastCalibratedAt`, the same test
+  `startSession()` uses) or "Off". When off, the Tremor band row reads
+  "… Hz (not applied)" in grey, with a short note that intensity counts all
+  frequencies until calibration is completed.
+- **Session Detail:** "Calibrated to Xg full-scale" is replaced by what the
+  session was measured with — "Measured with 0.35g full scale · 0.006g noise
+  floor" and "Band filter: 4.0–8.0 Hz" or "Band filter: off (all
+  frequencies)". Older records without these fields show the values that
+  applied then (0.006 g noise floor; band filter off). When the session is
+  displayed on different settings, a third line says "Shown on your current
+  1g full scale · 0.006g noise floor".
+- New helper `dateFromIso()` in `utils/analyticsStats.js`.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

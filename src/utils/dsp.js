@@ -439,6 +439,9 @@ export const DEFAULT_FULL_SCALE_G = 0.35;
 
 export function rmsToLevel(rms, fullScaleG = DEFAULT_FULL_SCALE_G, noiseFloorG = DEFAULT_NOISE_FLOOR_G) {
   if (rms <= noiseFloorG) return 0;
+  // Guard against a floor at/above full scale (would divide by zero or
+  // invert the scale): anything above the floor is then simply 100.
+  if (fullScaleG <= noiseFloorG) return 100;
   const pct = ((rms - noiseFloorG) / (fullScaleG - noiseFloorG)) * 100;
   return Math.round(Math.max(0, Math.min(100, pct)));
 }

@@ -7,6 +7,7 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { DEFAULT_FULL_SCALE_G } from '../utils/dsp';
 import { shareCalibrationLog } from '../services/calibrationLogger';
+import { dateFromIso } from '../utils/analyticsStats';
 
 // Formerly its own "SENSITIVITY" section; folded into CALIBRATION below
 // since both control the exact same fullScaleG setting — this is just the
@@ -56,6 +57,7 @@ export default function SettingsScreen() {
   const navigation = useNavigation();
   const { state, actions } = useStore();
   const currentValue = state.settings.fullScaleG ?? DEFAULT_FULL_SCALE_G;
+  const bandFilterOn = !!state.settings.lastCalibratedAt; // same test startSession() uses
   // TWENTY-SECOND follow-up: the 'cello_a'/'cello_b' test voices were
   // removed (Cello A became Cello) — treat any stale value as Cello so a
   // pill is always shown selected. persistence.js also migrates it.
@@ -198,10 +200,28 @@ export default function SettingsScreen() {
           </View>
           <View style={[styles.calibRow, { borderColor: c.bd3 }]}>
             <Text style={{ color: c.tx2, fontSize: 13 }}>Tremor band</Text>
-            <Text style={{ color: c.tx1, fontSize: 13, fontWeight: '600' }}>
+            <Text style={{ color: bandFilterOn ? c.tx1 : c.tx3, fontSize: 13, fontWeight: '600' }}>
               {state.settings.tremorBandMinHz.toFixed(1)}-{state.settings.tremorBandMaxHz.toFixed(1)} Hz
+              {bandFilterOn ? '' : ' (not applied)'}
             </Text>
           </View>
+          {/* THIRTY-THIRD follow-up: whether band filtering is applied to new
+              sessions — on once Calibration Mode has been completed and saved
+              (settings.lastCalibratedAt; see sessionLogic.js startSession()). */}
+          <View style={[styles.calibRow, { borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx2, fontSize: 13 }}>Band filtering</Text>
+            <Text style={{ color: bandFilterOn ? c.success : c.tx3, fontSize: 13, fontWeight: '600' }}>
+              {bandFilterOn
+                ? `On${dateFromIso(state.settings.lastCalibratedAt) ? ` since ${dateFromIso(state.settings.lastCalibratedAt)}` : ''}`
+                : 'Off'}
+            </Text>
+          </View>
+          {!bandFilterOn && (
+            <Text style={{ fontSize: 12, color: c.tx3, lineHeight: 17, marginTop: 8 }}>
+              Intensity currently counts motion at all frequencies. Complete calibration to measure your tremor band and
+              filter out slower, voluntary movement.
+            </Text>
+          )}
 
           <Pressable
             onPress={() => navigation.navigate('calibration', { fromWelcome: false })}

@@ -6,7 +6,7 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useBLE } from '../services/useBLE';
 import ScoreRing from '../components/ScoreRing';
-import { sessionIntensity, bandFor } from '../utils/intensityStats';
+import { sessionIntensity, bandFor, displayScale } from '../utils/intensityStats';
 import { todayKey } from '../utils/sessionStats';
 import { shortDate } from '../utils/analyticsStats';
 import { BrainIcon, BookIcon, WalkIcon, InfinityIcon } from '../components/TabIcons';
@@ -94,13 +94,16 @@ function useHomeStats(state) {
     }
 
     const allSessions = state.allSessions;
+    // THIRTIETH follow-up: every session shown on the current full scale /
+    // noise floor (see intensityStats.js sessionIntensity()).
+    const scale = displayScale(state.settings);
     const recent = allSessions[0]; // addSession unshifts, so index 0 is most recent
     let ringInfo = { valid: false, median: null, band: null },
       ringDesc = 'No sessions yet',
       lastSessionNote = 'No sessions recorded yet',
       ringEmptyLabel = 'NO DATA';
     if (recent) {
-      ringInfo = sessionIntensity(recent);
+      ringInfo = sessionIntensity(recent, scale);
       const when = recent.dateKey === todayKey() ? recent.time : `${shortDate(recent.dateKey)}, ${recent.time}`;
       if (!ringInfo.valid) {
         ringDesc = 'Session too short to measure';
@@ -119,7 +122,7 @@ function useHomeStats(state) {
     const mediansByDay = {};
     for (const s of allSessions) {
       if (!last7Keys.includes(s.dateKey)) continue;
-      const info = sessionIntensity(s);
+      const info = sessionIntensity(s, scale);
       if (info.valid) (mediansByDay[s.dateKey] = mediansByDay[s.dateKey] || []).push(info.median);
     }
     const dayValues = last7Keys.map((k) => avgOf(mediansByDay[k] || []));
@@ -135,7 +138,7 @@ function useHomeStats(state) {
     }
 
     return { ringInfo, ringEmptyLabel, ringDesc, lastSessionNote, dayValues, streakDays: streak, avg7, totalSess };
-  }, [state.appMode, state.allSessions]);
+  }, [state.appMode, state.allSessions, state.settings]);
 }
 
 export default function HomeScreen() {

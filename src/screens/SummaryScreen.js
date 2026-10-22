@@ -15,7 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { MedianIntensityRing, TimeInBands } from '../components/IntensityDisplay';
-import { sessionIntensity, intensityHeadline } from '../utils/intensityStats';
+import { sessionIntensity, intensityHeadline, sessionTrace, sessionReduction, displayScale } from '../utils/intensityStats';
 import IntensityChart from '../components/IntensityChart';
 import { persistSave } from '../services/persistence';
 import { saveSetupAsCustomSession } from '../services/sessionLogic';
@@ -46,13 +46,17 @@ export default function SummaryScreen() {
     return null;
   }
 
-  const intensity = sessionIntensity(r);
+  // THIRTIETH follow-up: same current-scale display as everywhere else
+  // (normally identical — results were just measured on these settings).
+  const scale = displayScale(state.settings);
+  const intensity = sessionIntensity(r, scale);
+  const reduction = sessionReduction(r, scale);
 
   const insight =
-    r.reduction >= 30
-      ? `Your tremor intensity fell ${r.reduction}% — a strong parasympathetic response. Consistent practice deepens this effect.`
-      : r.reduction >= 15
-      ? `A ${r.reduction}% reduction in tremor intensity. Your nervous system is responding. Keep building the habit.`
+    reduction >= 30
+      ? `Your tremor intensity fell ${reduction}% — a strong parasympathetic response. Consistent practice deepens this effect.`
+      : reduction >= 15
+      ? `A ${reduction}% reduction in tremor intensity. Your nervous system is responding. Keep building the habit.`
       : 'Early in your practice. Even small reductions train the neural pathways that lead to larger shifts over time.';
 
   const stats = [
@@ -127,7 +131,7 @@ export default function SummaryScreen() {
         </View>
 
         <View style={styles.chartWrap}>
-          <IntensityChart trace={r.intensityTrace} durationSec={r.duration * 60} colors={c} />
+          <IntensityChart trace={sessionTrace(r, scale)} durationSec={r.duration * 60} colors={c} />
         </View>
 
         {r.samples > 0 && (

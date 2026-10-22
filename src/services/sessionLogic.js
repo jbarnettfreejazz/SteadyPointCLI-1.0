@@ -338,6 +338,10 @@ export function startSession({ state, actions, navigation, overrides, origin = '
   // now gates live intensity/score via bandLimitedRms() (see dsp.js and
   // liveSession.js's updateLiveMetrics()).
   live.setFullScaleG(effective.settings?.fullScaleG);
+  // TWENTY-NINTH follow-up: the noise floor setting is now actually applied
+  // (was ignored in favour of dsp.js's built-in default). After
+  // setFullScaleG() — it's validated against it.
+  live.setNoiseFloorG(effective.settings?.noiseFloorG);
   // Band-filtering only activates once the user has actually run
   // Calibration Mode at least once (lastCalibratedAt is only ever set by
   // CalibrationResultsScreen.js on real completion — unlike hasCalibrated,
@@ -381,9 +385,16 @@ export function pauseRecording() {
 // connectivity guard). The record gets an `endReason`/`statusMessage` pair
 // so Session Detail can explain the gap, and the caller is routed to a
 // dedicated "Disconnected from device" screen instead of the normal Summary.
+// THIRTY-FIRST follow-up: g values rounded to 0.0001 g for storage — far
+// finer than the sensor's noise floor (0.006 g), and keeps saved sessions
+// compact.
+function roundG(values) {
+  return values.map((v) => Math.round(v * 10000) / 10000);
+}
+
 export function endSession({ state, actions, navigation, secs, byTimer = false, disconnected = false }) {
   live.stopTimers();
-  const { buffer: sessionBuffer, levelTrace } = live.stopRecordingBuffers();
+  const { buffer: sessionBuffer, levelTrace, rmsTraceG = [], rmsAllTraceG = [] } = live.stopRecordingBuffers();
   // No point sending STOP to a device that's already gone — sendCommand()
   // would just warn and no-op, but skipping it makes the intent explicit.
   if (!disconnected) sendCommand('STOP');
@@ -402,6 +413,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   // not the default, so these numbers are consistent with the live
   // display and the levelTrace used for intensity below.
   const sessionFullScaleG = live.getFullScaleG();
+  const sessionNoiseFloorG = live.getNoiseFloorG();
   // The tremor band actually in effect for this session (see startSession()
   // above) — persisted alongside fullScaleG for the same reason: so a
   // session's record stays self-describing even if the user's calibrated
@@ -420,8 +432,8 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     const ed = sessionBuffer.slice(-tenPct);
     const srms = rmsOf(sd.map((d) => d.x), sd.map((d) => d.y), sd.map((d) => d.z));
     const erms = rmsOf(ed.map((d) => d.x), ed.map((d) => d.y), ed.map((d) => d.z));
-    startLevel = rmsToLevel(srms, sessionFullScaleG);
-    endLevel = rmsToLevel(erms, sessionFullScaleG);
+    startLevel = rmsToLevel(srms, sessionFullScaleG, sessionNoiseFloorG);
+    endLevel = rmsToLevel(erms, sessionFullScaleG, sessionNoiseFloorG);
     reductionPct = startLevel > 0 ? Math.max(0, Math.round(((startLevel - endLevel) / startLevel) * 100)) : 0;
   }
 
@@ -447,6 +459,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     sessionId,
     reduction: reductionPct,
     fullScaleG: sessionFullScaleG,
+    noiseFloorG: sessionNoiseFloorG,
     startLevel,
     endLevel,
     duration: Math.max(1, Math.round(secs / 60)),
@@ -455,6 +468,14 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     peakFreq: liveState.liveFreqHz > 0 ? liveState.liveFreqHz : null,
     samples: sessionBuffer.length,
     intensityTrace: downsampleTrace(levelTrace),
+    // THIRTY-FIRST follow-up: the motion (g) behind each intensityTrace point,
+    // sampled at the same positions (same length input, same downsampling), so
+    // entry i of all three traces is the same moment. rmsTraceG is what the
+    // 0-100 reading was scored from (in-band when band filtering was on);
+    // rmsAllTraceG is all-frequencies and depends on no calibration setting.
+    // Saved for future comparisons — nothing displays them yet.
+    rmsTraceG: roundG(downsampleTrace(rmsTraceG)),
+    rmsAllTraceG: roundG(downsampleTrace(rmsAllTraceG)),
     intensityValid,
     medianIntensity,
     bandPct,
@@ -487,6 +508,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     label: sessionLabel,
     reduction: results.reduction,
     fullScaleG: results.fullScaleG,
+    noiseFloorG: results.noiseFloorG, // TWENTY-NINTH follow-up — the floor actually used
     tremorBandMinHz: sessionTremorBandMinHz,
     tremorBandMaxHz: sessionTremorBandMaxHz,
     tremorBandFiltered: sessionTremorBandActive, // whether the band above was actually applied to this session's scoring, or just carried along informationally
@@ -495,6 +517,8 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     freq: results.peakFreq,
     samples: results.samples,
     intensityTrace: results.intensityTrace,
+    rmsTraceG: results.rmsTraceG, // THIRTY-FIRST follow-up
+    rmsAllTraceG: results.rmsAllTraceG,
     intensityValid: results.intensityValid, // TWENTY-SIXTH follow-up
     medianIntensity: results.medianIntensity,
     bandPct: results.bandPct,

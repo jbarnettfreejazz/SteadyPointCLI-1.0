@@ -7,6 +7,8 @@
 // with the same colours (RecordingScreen.js), so what users see during a
 // session matches what they see afterwards. Lower intensity is better.
 
+import { DEFAULT_FULL_SCALE_G, DEFAULT_NOISE_FLOOR_G, rmsToLevel } from './dsp';
+
 export const INTENSITY_BANDS = [
   { key: 'none', label: 'None', range: 'below 20', upTo: 20, color: 'success', bg: 'bgSuccess' },
   { key: 'mild', label: 'Mild', range: '20–44', upTo: 45, color: 'info', bg: 'bgInfo' },
@@ -60,18 +62,121 @@ export function bandPercentages(trace) {
 export const MIN_READINGS = 10;
 export const MIN_SECONDS = 30;
 
+// ── THIRTIETH follow-up: showing every session on the CURRENT scale ──
+//
+// A 0-100 reading depends on the full scale (motion that reads as 100) and
+// the noise floor (motion that reads as 0) in effect when it was measured.
+// Both only stretch the scale, so a saved reading can be turned back into
+// the motion (in g) it came from and re-scored with the user's current
+// settings. This is done at display time only — saved sessions are never
+// modified — so history always follows the current settings.
+//
+// Assumes the session's frequency band matches today's (agreed): band
+// changes alter WHAT is measured and can't be converted. Analytics marks
+// where the band or band filtering changed (see analyticsStats.js).
+//
+// Limits: a reading pinned at 0 or 100 is only a bound ("at least full
+// scale"), so it's converted as if it sat exactly on that bound.
+
+// A { fullScaleG, noiseFloorG } pair, with the same validation the live
+// pipeline applies (liveSession.js setFullScaleG()/setNoiseFloorG()).
+function validScale(fullScaleG, noiseFloorG) {
+  const fs = typeof fullScaleG === 'number' && fullScaleG > 0 ? fullScaleG : DEFAULT_FULL_SCALE_G;
+  const nf = typeof noiseFloorG === 'number' && noiseFloorG >= 0 && noiseFloorG < fs ? noiseFloorG : Math.min(DEFAULT_NOISE_FLOOR_G, fs / 2);
+  return { fullScaleG: fs, noiseFloorG: nf };
+}
+
+// The scale sessions are shown on: the user's current settings.
+export function displayScale(settings) {
+  return validScale(settings?.fullScaleG, settings?.noiseFloorG);
+}
+
+// The scale a saved session (or Summary's results) was measured on. Sessions
+// recorded before noiseFloorG was saved all used the 0.006 g default (the
+// setting wasn't applied until the twenty-ninth follow-up).
+export function sessionScale(s) {
+  return validScale(s?.fullScaleG, s?.noiseFloorG);
+}
+
+function sameScale(a, b) {
+  return Math.abs(a.fullScaleG - b.fullScaleG) < 1e-9 && Math.abs(a.noiseFloorG - b.noiseFloorG) < 1e-9;
+}
+
+// One 0-100 reading from scale `from` to scale `to` (unrounded; callers
+// round). Inverse of dsp.js rmsToLevel(), then rmsToLevel() again.
+export function rescaleLevel(level, from, to) {
+  if (level == null) return level;
+  const g = from.noiseFloorG + (Math.max(0, Math.min(100, level)) / 100) * (from.fullScaleG - from.noiseFloorG);
+  if (g <= to.noiseFloorG) return 0;
+  return Math.max(0, Math.min(100, ((g - to.noiseFloorG) / (to.fullScaleG - to.noiseFloorG)) * 100));
+}
+
+function needsRescale(s, scale) {
+  return !!scale && !sameScale(sessionScale(s), scale);
+}
+
+// THIRTY-SECOND follow-up: sessions recorded since the thirty-first
+// follow-up also saved the motion (g) behind each trace point (rmsTraceG,
+// index-aligned with intensityTrace). Re-scoring that directly is exact —
+// no 0/100 pinning, no whole-number coarseness — so it's used when present.
+function hasGTrace(s, key = 'rmsTraceG') {
+  const g = s?.[key];
+  return Array.isArray(g) && g.length > 0 && g.length === (s.intensityTrace || []).length;
+}
+
+// The session's saved intensity trace on `scale` (whole numbers, like the
+// saved trace). Used by the Intensity Over Session chart.
+export function sessionTrace(s, scale) {
+  const trace = s?.intensityTrace || [];
+  if (!needsRescale(s, scale)) return trace;
+  if (hasGTrace(s)) return s.rmsTraceG.map((g) => rmsToLevel(g, scale.fullScaleG, scale.noiseFloorG));
+  const from = sessionScale(s);
+  return trace.map((v) => Math.round(rescaleLevel(v, from, scale)));
+}
+
+// THIRTY-SECOND follow-up: a session's median intensity measured on ALL
+// frequencies (rmsAllTraceG — includes voluntary movement, independent of
+// the band), scored on `scale`. null when the session predates that field
+// or was too short to measure. Used by Analytics' "All motion" view.
+export function allMotionMedian(s, scale) {
+  if (!hasGTrace(s, 'rmsAllTraceG')) return null;
+  const trace = s.intensityTrace || [];
+  const valid = s.intensityValid ?? s.scoreValid ?? trace.length >= MIN_READINGS;
+  if (!valid) return null;
+  const sc = scale || sessionScale(s);
+  return Math.round(median(s.rmsAllTraceG.map((g) => rmsToLevel(g, sc.fullScaleG, sc.noiseFloorG))));
+}
+
+// Start-vs-end reduction (%) on `scale`, recomputed from the saved start and
+// end levels the same way endSession() computes it.
+export function sessionReduction(s, scale) {
+  if (!needsRescale(s, scale) || typeof s.startLevel !== 'number' || typeof s.endLevel !== 'number') {
+    return s.reduction;
+  }
+  const from = sessionScale(s);
+  const start = Math.round(rescaleLevel(s.startLevel, from, scale));
+  const end = Math.round(rescaleLevel(s.endLevel, from, scale));
+  return start > 0 ? Math.max(0, Math.round(((start - end) / start) * 100)) : 0;
+}
+
 // Everything a screen needs about one saved session (or Summary's results):
 // { valid, median, band, pct }. Sessions recorded from this follow-up on
 // store medianIntensity / bandPct from the full-resolution trace. Older
 // sessions are derived on the fly from their saved intensityTrace (an
 // evenly-spaced ~150-point sample of the same readings), so history needs
 // no migration.
-export function sessionIntensity(s) {
+//
+// `scale` (optional, from displayScale(state.settings)): when the session
+// was measured on a different full scale / noise floor, the median is
+// converted exactly (converting keeps the order of readings, so the middle
+// reading stays in the middle) and the band split is recomputed from the
+// converted ~150-point trace (approximate — typically within a few %).
+export function sessionIntensity(s, scale) {
   if (!s) return { valid: false, median: null, band: null, pct: null };
   const trace = s.intensityTrace || [];
   const valid = s.intensityValid ?? s.scoreValid ?? trace.length >= MIN_READINGS;
   if (!valid) return { valid: false, median: null, band: null, pct: null };
-  const med = s.medianIntensity != null ? s.medianIntensity : median(trace);
+  let med = s.medianIntensity != null ? s.medianIntensity : median(trace);
   if (med == null) return { valid: false, median: null, band: null, pct: null };
   let pct = s.bandPct || null;
   if (!pct) {
@@ -80,8 +185,18 @@ export function sessionIntensity(s) {
       ? roundTo100({ none: s.pctNone, mild: s.pctMild, moderate: s.pctModerate, high: s.pctHigh })
       : bandPercentages(trace);
   }
+  let rescaled = false;
+  if (needsRescale(s, scale)) {
+    // The stored median converts exactly unless it was itself pinned at 0
+    // or 100 (then it's only a bound); in that case use the saved motion
+    // trace when the session has one (THIRTY-SECOND follow-up).
+    const pinned = med <= 0 || med >= 100;
+    med = pinned && hasGTrace(s) ? median(sessionTrace(s, scale)) : rescaleLevel(med, sessionScale(s), scale);
+    if (trace.length > 0) pct = bandPercentages(sessionTrace(s, scale));
+    rescaled = true;
+  }
   const rounded = Math.round(med);
-  return { valid: true, median: rounded, band: bandFor(rounded), pct };
+  return { valid: true, median: rounded, band: bandFor(rounded), pct, rescaled };
 }
 
 // One-line headline for Summary, by median band. Neutral and supportive —

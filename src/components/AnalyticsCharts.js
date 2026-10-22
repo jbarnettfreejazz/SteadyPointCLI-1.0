@@ -28,9 +28,9 @@ function Empty({ c, text }) {
 // One dot per session (median intensity, coloured by band), a blue 3-session
 // rolling-average line, dashed band boundaries at 20/45/70, and a vertical
 // marker for each session that has a note (label = the note, shortened).
-export function IntensityTrendChart({ trend, c, height = 180 }) {
+export function IntensityTrendChart({ trend, c, height = 180, emptyText = 'No measured sessions in this period' }) {
   const { points, rolling, markers } = trend;
-  if (points.length === 0) return <Empty c={c} text="No measured sessions in this period" />;
+  if (points.length === 0) return <Empty c={c} text={emptyText} />;
   const H = height;
   const padT = 22;
   const padB = 18;
@@ -41,24 +41,39 @@ export function IntensityTrendChart({ trend, c, height = 180 }) {
   const y = (v) => padT + innerH * (1 - Math.max(0, Math.min(100, v)) / 100);
   const line = rolling.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
 
-  // Marker labels: skip a label (keep its line) if it would overlap the
-  // previous one; keep each label inside the chart.
+  // Marker labels: skip a label (keep its line) if it would overlap one
+  // already placed; keep each label inside the chart. THIRTIETH follow-up:
+  // band-change labels are placed first so a nearby note can't hide them.
   const LABEL_MAX = 16;
-  let lastLabelRight = -Infinity;
-  const markerEls = markers.map((m) => {
+  const placed = [];
+  const labelFor = new Map();
+  const rank = (m) => (m.kind === 'band' ? 0 : 1);
+  const byPriority = markers.map((m, i) => ({ m, i })).sort((a, b) => rank(a.m) - rank(b.m) || a.i - b.i);
+  for (const { m, i } of byPriority) {
     const mx = x(m.index);
     const text = m.text.length > LABEL_MAX ? `${m.text.slice(0, LABEL_MAX - 1)}…` : m.text;
     const w = Math.min(110, text.length * 4.6 + 12);
     const left = Math.max(PAD_L, Math.min(W - PAD_R - w, mx - w / 2));
-    const showLabel = left >= lastLabelRight + 4;
-    if (showLabel) lastLabelRight = left + w;
+    if (placed.every(([l, r]) => left >= r + 4 || left + w + 4 <= l)) {
+      placed.push([left, left + w]);
+      labelFor.set(i, { text, w, left });
+    }
+  }
+  const markerEls = markers.map((m, i) => {
+    const mx = x(m.index);
+    const label = labelFor.get(i);
+    const showLabel = !!label;
+    const { text, w, left } = label || {};
+    // THIRTIETH follow-up: band-change markers are grey outlined pills, so
+    // they read differently from the blue session-note markers.
+    const band = m.kind === 'band';
     return (
-      <React.Fragment key={`m${m.index}`}>
-        <Line x1={mx} x2={mx} y1={padT - 2} y2={padT + innerH} stroke={c.info} strokeWidth="1" strokeDasharray="3 3" />
+      <React.Fragment key={`m${m.index}${m.kind || ''}`}>
+        <Line x1={mx} x2={mx} y1={padT - 2} y2={padT + innerH} stroke={band ? c.tx3 : c.info} strokeWidth="1" strokeDasharray={band ? '1 3' : '3 3'} />
         {showLabel && (
           <>
-            <Rect x={left} y={2} width={w} height={14} rx={7} fill={c.info} />
-            <SvgText x={left + w / 2} y={12} fontSize="8.5" fontWeight="600" fill="#ffffff" textAnchor="middle">
+            <Rect x={left} y={2} width={w} height={14} rx={7} fill={band ? c.bg1 : c.info} stroke={band ? c.tx3 : 'none'} strokeWidth={band ? 0.8 : 0} />
+            <SvgText x={left + w / 2} y={12} fontSize="8.5" fontWeight="600" fill={band ? c.tx2 : '#ffffff'} textAnchor="middle">
               {text}
             </SvgText>
           </>

@@ -6,6 +6,7 @@ import {
   rmsToLevel,
   bandLimitedRms,
   DEFAULT_FULL_SCALE_G,
+  DEFAULT_NOISE_FLOOR_G,
 } from '../utils/dsp';
 
 // ══════════════════════════════════════════════════════
@@ -76,6 +77,10 @@ function freshState() {
     tremorHistory: Array(SPARK_LEN).fill(0),
     sessionBuffer: [], // { t (seconds), x, y, z }
     levelTrace: [], // tremorLevel at each updateLiveMetrics tick — full session trace for scoring
+    // THIRTY-FIRST follow-up: the motion (in g) behind each levelTrace entry,
+    // index-aligned with it — see updateLiveMetrics().
+    rmsTraceG: [], // the value levelTrace was scored from (in-band when band filtering is on)
+    rmsAllTraceG: [], // all-frequencies (broadband) RMS — independent of every calibration setting
     tremorLevel: 0,
     displayLevel: 0,
     liveFreqHz: 0,
@@ -109,6 +114,23 @@ export function setFullScaleG(value) {
 
 export function getFullScaleG() {
   return fullScaleG;
+}
+
+// TWENTY-NINTH follow-up: the user's noise floor setting (settings.noiseFloorG)
+// — RMS motion at or below this reads as intensity 0. Previously stored in
+// settings but never applied: live intensity always used dsp.js's built-in
+// DEFAULT_NOISE_FLOOR_G. Same fixed-for-the-session pattern as fullScaleG,
+// and must be set AFTER setFullScaleG() since it's validated against it
+// (a floor at or above full scale would make every reading 0 or divide by
+// zero in rmsToLevel()).
+let noiseFloorG = DEFAULT_NOISE_FLOOR_G;
+
+export function setNoiseFloorG(value) {
+  noiseFloorG = typeof value === 'number' && value >= 0 && value < fullScaleG ? value : Math.min(DEFAULT_NOISE_FLOOR_G, fullScaleG / 2);
+}
+
+export function getNoiseFloorG() {
+  return noiseFloorG;
 }
 
 // The user's calibrated tremor frequency band (see Calibration_Mode_Design.pdf
@@ -221,9 +243,10 @@ export function beginSessionBuffers() {
 export function stopRecordingBuffers() {
   const buffer = state.sessionBuffer;
   const levelTrace = state.levelTrace;
+  const { rmsTraceG, rmsAllTraceG } = state;
   state = { ...state, isRecording: false };
   notify();
-  return { buffer, levelTrace };
+  return { buffer, levelTrace, rmsTraceG, rmsAllTraceG };
 }
 
 // Mirrors pushPacket(ax, ay, az) — buffer bookkeeping only, no metrics math
@@ -335,16 +358,25 @@ function updateLiveMetrics() {
   // manual full-scale preset gets the original, unfiltered broadband
   // rmsOf() instead, so a factory-default band they never saw or measured
   // never silently narrows their reading.
+  // THIRTY-FIRST follow-up: the broadband RMS is always computed now (it's
+  // cheap) and saved alongside the level, so sessions stay comparable even
+  // across band changes — see the push below.
+  const rmsAll = rmsOf(state.recentX, state.recentY, state.recentZ);
   const rms = tremorBandActive
     ? bandLimitedRms(state.recentX, state.recentY, state.recentZ, sr, tremorBandMinHz, tremorBandMaxHz)
-    : rmsOf(state.recentX, state.recentY, state.recentZ);
-  const tremorLevel = rmsToLevel(rms, fullScaleG);
+    : rmsAll;
+  const tremorLevel = rmsToLevel(rms, fullScaleG, noiseFloorG);
   state.tremorLevel = tremorLevel;
   state.sparkBuf = [...state.sparkBuf.slice(-(SPARK_LEN - 1)), tremorLevel];
   state.tremorHistory = state.sparkBuf;
 
   if (state.isRecording) {
     state.levelTrace.push(tremorLevel);
+    // THIRTY-FIRST follow-up: the motion behind this reading, in g, before
+    // the 0-100 conversion (which clips at 0 and 100 and depends on full
+    // scale / noise floor). Saved only — nothing displays these yet.
+    state.rmsTraceG.push(rms);
+    state.rmsAllTraceG.push(rmsAll);
   }
 
   // Rate-limits the headline display value toward tremorLevel rather than
