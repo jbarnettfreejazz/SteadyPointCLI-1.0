@@ -30,6 +30,12 @@ export function buildInitialState(appMode = 'real') {
       tremorBandMaxHz: 14,
       noiseFloorG: 0.006, // not measured by Calibration Mode itself; manually editable only (Phase 2)
       hasCalibrated: false, // gates the mandatory first-launch calibration — see RootNavigator.js
+      analyticsPeriod: '30d', // THIRTY-FOURTH follow-up: Analytics date range ('7d' | '30d' | 'all'), remembered across launches
+      // THIRTY-FIFTH follow-up: band filtering is its own switch (Settings >
+      // Calibration), turned on by saving a wizard calibration or by hand.
+      bandFilterEnabled: false,
+      calibrationSource: null, // 'wizard' | 'manual' — who last set the calibration values
+      calibrationSetAt: null, // ISO timestamp of that
       lastCalibratedAt: null, // ISO timestamp of the last completed Calibration Mode run — see HomeScreen.js's recalibration nudge
     },
 

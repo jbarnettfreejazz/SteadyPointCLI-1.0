@@ -15,6 +15,8 @@ import ArticleScreen from '../screens/ArticleScreen';
 import CalibrationWelcomeScreen from '../screens/CalibrationWelcomeScreen';
 import CalibrationScreen from '../screens/CalibrationScreen';
 import CalibrationResultsScreen from '../screens/CalibrationResultsScreen';
+import CalibrationSettingsScreen from '../screens/CalibrationSettingsScreen';
+import SonificationSettingsScreen from '../screens/SonificationSettingsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -49,6 +51,9 @@ export default function RootNavigator() {
         <Stack.Screen name="calibrationWelcome" component={CalibrationWelcomeScreen} />
         <Stack.Screen name="calibration" component={CalibrationScreen} />
         <Stack.Screen name="calibrationResults" component={CalibrationResultsScreen} />
+        {/* THIRTY-FIFTH follow-up: Settings sub-pages */}
+        <Stack.Screen name="calibrationSettings" component={CalibrationSettingsScreen} />
+        <Stack.Screen name="sonificationSettings" component={SonificationSettingsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

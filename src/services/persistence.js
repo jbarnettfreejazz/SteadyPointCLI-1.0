@@ -45,6 +45,25 @@ export async function persistSave(state) {
   }
 }
 
+// THIRTY-FOURTH follow-up: save just the settings, right after they change
+// (App.js). Settings changed outside a session — calibration values,
+// voice, custom tonal range, Analytics date range — were previously only
+// saved by the next full persistSave (e.g. at session end), so closing the
+// app first lost them. Also writes meta so persistLoad() doesn't ignore the
+// save for a user who hasn't completed a session yet.
+export async function persistSettings(state) {
+  if (state.appMode === 'demo') return;
+  try {
+    await AsyncStorage.multiSet([
+      [SP_KEYS.settings, JSON.stringify(state.settings)],
+      [SP_KEYS.mode, state.appMode],
+      [SP_KEYS.meta, JSON.stringify({ savedAt: new Date().toISOString(), version: '0.3.0' })],
+    ]);
+  } catch (e) {
+    console.warn('persistSettings failed', e);
+  }
+}
+
 export async function persistLoad() {
   try {
     const entries = await AsyncStorage.multiGet([
@@ -130,6 +149,10 @@ export async function persistLoad() {
           customTonalRangeMaxHz: 700,
           ...loadedSettings,
           hasCalibrated: loadedSettings.hasCalibrated ?? true,
+          // THIRTY-FIFTH follow-up: band filtering used to be "on once the
+          // wizard was saved" (lastCalibratedAt); it's now its own setting.
+          // Existing users keep exactly the behaviour they had.
+          bandFilterEnabled: loadedSettings.bandFilterEnabled ?? !!loadedSettings.lastCalibratedAt,
         }
       : null;
     // TWENTY-SECOND follow-up: 'cello_a' ("Cello A (test)") became the

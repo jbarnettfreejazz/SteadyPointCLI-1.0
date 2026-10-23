@@ -29,6 +29,11 @@ export default function CalibrationResultsScreen({ route }) {
       tremorBandMaxHz,
       hasCalibrated: true,
       lastCalibratedAt: new Date().toISOString(),
+      // THIRTY-FIFTH follow-up: saving a measured calibration turns band
+      // filtering on and records where the values came from.
+      bandFilterEnabled: true,
+      calibrationSource: 'wizard',
+      calibrationSetAt: new Date().toISOString(),
     };
     actions.updateSettings(patch);
     // Explicit persistSave here (rather than relying on the next
@@ -38,7 +43,12 @@ export default function CalibrationResultsScreen({ route }) {
     // above is async, so `state` here is still the pre-update snapshot —
     // same pattern used by savePinnedSession()/SummaryScreen.js elsewhere.
     await persistSave({ ...state, settings: { ...state.settings, ...patch } });
-    navigation.reset({ index: 0, routes: [{ name: 'mainTabs' }] });
+    // THIRTY-FIFTH follow-up: return to wherever the wizard was opened from
+    // (Settings > Calibration, or Home's reminder) — this screen replaced
+    // the calibration screen, so going back lands there. First-launch
+    // calibration (from the Welcome screen) still goes on to the app.
+    if (!fromWelcome && navigation.canGoBack()) navigation.goBack();
+    else navigation.reset({ index: 0, routes: [{ name: 'mainTabs' }] });
   };
 
   const handleRecalibrate = () => {

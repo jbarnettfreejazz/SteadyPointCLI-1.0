@@ -1,332 +1,90 @@
-import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Alert, TextInput } from 'react-native';
+import React from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Slider from '@react-native-community/slider';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
-import { DEFAULT_FULL_SCALE_G } from '../utils/dsp';
-import { shareCalibrationLog } from '../services/calibrationLogger';
-import { dateFromIso } from '../utils/analyticsStats';
+import DeviceInfo from 'react-native-device-info';
+import { VOICE_OPTIONS } from './SonificationSettingsScreen';
+import { formatValue } from '../utils/calibrationLimits';
 
-// Formerly its own "SENSITIVITY" section; folded into CALIBRATION below
-// since both control the exact same fullScaleG setting — this is just the
-// manual/quick way to set it, vs. the Tremor Measurement wizard's
-// automatic/more-accurate way. Matches the team's parallel progressive web
-// app's Settings > Sensitivity presets, for consistency across platforms.
-// One deliberate difference: keeps our own tuned 0.35g (from actual
-// on-device calibration earlier this project) in place of the PWA's 0.3g,
-// at the user's explicit request, rather than adopting that value verbatim.
-// "sensitivity" (not "frequency") in these labels — this setting is a
-// full-scale amplitude (g-force) threshold, not a Hz value. Labels run
-// Max -> Min as g increases, matching the "Lower = more sensitive" copy
-// above the grid (a smaller full-scale-g threshold takes less motion to
-// read as intensity 100, i.e. is MORE sensitive) — a lower g value here
-// is NOT the same direction as "Low-sensitivity". Originally shipped
-// with the direction reversed (High-sensitivity on the least-sensitive
-// 3g option); caught and corrected before wide use.
-const PRESETS_G = [
-  { g: DEFAULT_FULL_SCALE_G, label: 'Max-sensitivity' },
-  { g: 1.0, label: 'High-sensitivity' },
-  { g: 2.0, label: 'Low-sensitivity' },
-  { g: 3.0, label: 'Min-sensitivity' },
-];
+// THIRTY-FIFTH follow-up: the main Settings page is now a short menu —
+// Calibration and Sonification each open their own sub-page
+// (CalibrationSettingsScreen / SonificationSettingsScreen) — plus the app
+// version at the bottom. The old full-scale preset grid is gone: the four
+// calibration values are edited directly on the Calibration sub-page.
 
-const VOICE_OPTIONS = [
-  { key: 'cello', label: 'Cello' },
-  { key: 'viola', label: 'Viola' },
-  { key: 'violin', label: 'Violin' },
-  { key: 'custom', label: 'Custom' },
-];
+// "Version 1.2 (34)" — falls back gracefully if the native module isn't
+// available (e.g. a build made before `pod install` picked it up).
+function appVersionLabel() {
+  try {
+    const version = DeviceInfo.getVersion();
+    const build = DeviceInfo.getBuildNumber();
+    if (!version) return '';
+    return build && build !== version ? `Version ${version} (${build})` : `Version ${version}`;
+  } catch (e) {
+    return '';
+  }
+}
 
-// Bounds for the "Custom" tonal-range sliders — originally chosen to cover
-// (and extend past) the three fixed one-octave instrument registers
-// (cello 65-130Hz, viola 196-330Hz, violin 392-784Hz). Since the
-// TWENTY-SECOND follow-up the multi-sampled strings span far wider ranges
-// (cello 65-1000Hz, viola 131-1175Hz, violin 196-1568Hz — see audio.js
-// VOICE_CONFIG); these slider bounds are unchanged.
-const CUSTOM_RANGE_SLIDER_MIN = 50;
-const CUSTOM_RANGE_SLIDER_MAX = 1000;
-// Smallest gap enforced between the Lower and Upper custom-range values —
-// keeps the mapped pitch range from collapsing to (near-)zero width, which
-// would make every tremor frequency map to effectively the same pitch.
-const CUSTOM_RANGE_MIN_GAP_HZ = 10;
+function MenuRow({ title, subtitle, onPress, c, first }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.row, !first && { borderTopWidth: 1, borderColor: c.bd3 }]}
+      accessibilityRole="button"
+      accessibilityLabel={title}>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 15, fontWeight: '600', color: c.tx1 }}>{title}</Text>
+        {!!subtitle && <Text style={{ fontSize: 12, color: c.tx3, marginTop: 3 }}>{subtitle}</Text>}
+      </View>
+      <Text style={{ fontSize: 20, color: c.tx3 }}>›</Text>
+    </Pressable>
+  );
+}
 
 export default function SettingsScreen() {
   const c = useTheme();
   const navigation = useNavigation();
-  const { state, actions } = useStore();
-  const currentValue = state.settings.fullScaleG ?? DEFAULT_FULL_SCALE_G;
-  const bandFilterOn = !!state.settings.lastCalibratedAt; // same test startSession() uses
-  // TWENTY-SECOND follow-up: the 'cello_a'/'cello_b' test voices were
-  // removed (Cello A became Cello) — treat any stale value as Cello so a
-  // pill is always shown selected. persistence.js also migrates it.
-  const savedVoice = state.settings.sonificationVoice ?? 'cello';
-  const currentVoice = VOICE_OPTIONS.some((v) => v.key === savedVoice) ? savedVoice : 'cello';
-  const customMinHz = state.settings.customTonalRangeMinHz ?? 200;
-  const customMaxHz = state.settings.customTonalRangeMaxHz ?? 700;
+  const { state } = useStore();
+  const s = state.settings;
 
-  // Sub-pane expand/collapse is purely transient UI state, not data worth
-  // persisting — it always starts collapsed, even when "Custom" is already
-  // the active voice from a prior session.
-  const [customExpanded, setCustomExpanded] = useState(false);
-
-  // Local text-field buffers, separate from the committed store values, so
-  // the user can freely type/clear digits mid-edit without each keystroke
-  // being re-validated and bounced back. Kept in sync with the store
-  // whenever the slider (or the other field, after a valid commit) changes
-  // the committed value out from under an untouched field.
-  const [minText, setMinText] = useState(String(Math.round(customMinHz)));
-  const [maxText, setMaxText] = useState(String(Math.round(customMaxHz)));
-  React.useEffect(() => {
-    setMinText(String(Math.round(customMinHz)));
-  }, [customMinHz]);
-  React.useEffect(() => {
-    setMaxText(String(Math.round(customMaxHz)));
-  }, [customMaxHz]);
-
-  const handleVoiceSelect = (key) => {
-    if (key === 'custom' && currentVoice === 'custom') {
-      // Pressing Custom again while it's already selected just toggles the
-      // sub-pane, per spec — doesn't need to also re-write the setting.
-      setCustomExpanded((prev) => !prev);
-      return;
-    }
-    actions.updateSettings({ sonificationVoice: key });
-    if (key === 'custom') setCustomExpanded(true);
-  };
-
-  // Shared validation for both the sliders and the numeric fields: clamps
-  // to the slider bounds and enforces Lower < Upper (with a minimum gap)
-  // before ever committing to the store.
-  const commitMin = (rawValue) => {
-    const clamped = Math.min(Math.max(rawValue, CUSTOM_RANGE_SLIDER_MIN), CUSTOM_RANGE_SLIDER_MAX);
-    const safeMin = Math.min(clamped, customMaxHz - CUSTOM_RANGE_MIN_GAP_HZ);
-    actions.updateSettings({ customTonalRangeMinHz: safeMin });
-  };
-  const commitMax = (rawValue) => {
-    const clamped = Math.min(Math.max(rawValue, CUSTOM_RANGE_SLIDER_MIN), CUSTOM_RANGE_SLIDER_MAX);
-    const safeMax = Math.max(clamped, customMinHz + CUSTOM_RANGE_MIN_GAP_HZ);
-    actions.updateSettings({ customTonalRangeMaxHz: safeMax });
-  };
-
-  const handleMinTextChange = (text) => {
-    setMinText(text);
-    const parsed = Number(text);
-    if (text.trim() !== '' && Number.isFinite(parsed)) commitMin(parsed);
-  };
-  const handleMaxTextChange = (text) => {
-    setMaxText(text);
-    const parsed = Number(text);
-    if (text.trim() !== '' && Number.isFinite(parsed)) commitMax(parsed);
-  };
-  // On blur, snap the field back to whatever the committed value actually
-  // ended up being — covers the case where the user left the field on an
-  // invalid/out-of-range entry (or empty) without a valid keystroke after it.
-  const handleMinBlur = () => setMinText(String(Math.round(customMinHz)));
-  const handleMaxBlur = () => setMaxText(String(Math.round(customMaxHz)));
-
-  const handleShareLog = async () => {
-    try {
-      await shareCalibrationLog();
-    } catch (e) {
-      Alert.alert('Nothing to share yet', e.message || 'Please try again.');
-    }
-  };
+  const calibrationSummary = `${formatValue('fullScaleG', s.fullScaleG)} g full scale · band filtering ${
+    s.bandFilterEnabled ? 'on' : 'off'
+  }`;
+  const voice = VOICE_OPTIONS.find((v) => v.key === s.sonificationVoice) || VOICE_OPTIONS[0];
+  const sonificationSummary =
+    voice.key === 'custom'
+      ? `Custom · ${Math.round(s.customTonalRangeMinHz ?? 200)}–${Math.round(s.customTonalRangeMaxHz ?? 700)} Hz`
+      : voice.label;
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
-        automaticallyAdjustKeyboardInsets
-        contentInsetAdjustmentBehavior="automatic">
+      <ScrollView contentContainerStyle={styles.scroll} contentInsetAdjustmentBehavior="automatic">
         <Text style={[styles.h1, { color: c.tx1 }]}>Settings</Text>
 
-        <Text style={[styles.sectionLabel, { color: c.tx3 }]}>CALIBRATION</Text>
         <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
-          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
-            Select pre-determined full-scale range values, or use Tremor Measurement Calibration to measure your
-            own.
-          </Text>
-
-          <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Full-scale range</Text>
-          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
-            Motion (in g) that reads as intensity 100. Lower = more sensitive.
-          </Text>
-
-          <View style={styles.presetGrid}>
-            {PRESETS_G.map((p) => {
-              const selected = currentValue === p.g;
-              return (
-                <Pressable
-                  key={p.g}
-                  onPress={() => actions.updateSettings({ fullScaleG: p.g })}
-                  style={[
-                    styles.presetCell,
-                    {
-                      borderColor: selected ? c.info : c.bd3,
-                      backgroundColor: selected ? c.bgInfo : c.bg1,
-                    },
-                  ]}>
-                  <Text
-                    style={{
-                      fontSize: 10,
-                      fontWeight: '700',
-                      letterSpacing: 0.4,
-                      color: selected ? c.info : c.tx3,
-                      textAlign: 'center',
-                      marginBottom: 4,
-                    }}>
-                    {p.label.toUpperCase()}
-                  </Text>
-                  <Text style={{ fontSize: 18, fontWeight: '700', color: selected ? c.info : c.tx1 }}>{p.g}g</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={[styles.divider, { backgroundColor: c.bd3 }]} />
-
-          <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Tremor Measurement</Text>
-          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
-            Measures your own "level 100" and tremor frequency range directly, by having you produce your biggest
-            tremor for a few seconds — more accurate than picking a preset above.
-          </Text>
-
-          <View style={[styles.calibRow, { borderColor: c.bd3 }]}>
-            <Text style={{ color: c.tx2, fontSize: 13 }}>Full scale (level 100)</Text>
-            <Text style={{ color: c.tx1, fontSize: 13, fontWeight: '600' }}>{state.settings.fullScaleG.toFixed(2)} g</Text>
-          </View>
-          <View style={[styles.calibRow, { borderColor: c.bd3 }]}>
-            <Text style={{ color: c.tx2, fontSize: 13 }}>Tremor band</Text>
-            <Text style={{ color: bandFilterOn ? c.tx1 : c.tx3, fontSize: 13, fontWeight: '600' }}>
-              {state.settings.tremorBandMinHz.toFixed(1)}-{state.settings.tremorBandMaxHz.toFixed(1)} Hz
-              {bandFilterOn ? '' : ' (not applied)'}
-            </Text>
-          </View>
-          {/* THIRTY-THIRD follow-up: whether band filtering is applied to new
-              sessions — on once Calibration Mode has been completed and saved
-              (settings.lastCalibratedAt; see sessionLogic.js startSession()). */}
-          <View style={[styles.calibRow, { borderColor: c.bd3 }]}>
-            <Text style={{ color: c.tx2, fontSize: 13 }}>Band filtering</Text>
-            <Text style={{ color: bandFilterOn ? c.success : c.tx3, fontSize: 13, fontWeight: '600' }}>
-              {bandFilterOn
-                ? `On${dateFromIso(state.settings.lastCalibratedAt) ? ` since ${dateFromIso(state.settings.lastCalibratedAt)}` : ''}`
-                : 'Off'}
-            </Text>
-          </View>
-          {!bandFilterOn && (
-            <Text style={{ fontSize: 12, color: c.tx3, lineHeight: 17, marginTop: 8 }}>
-              Intensity currently counts motion at all frequencies. Complete calibration to measure your tremor band and
-              filter out slower, voluntary movement.
-            </Text>
-          )}
-
-          <Pressable
-            onPress={() => navigation.navigate('calibration', { fromWelcome: false })}
-            style={[styles.calibButton, { borderColor: c.info }]}>
-            <Text style={{ color: c.info, fontWeight: '600' }}>
-              {state.settings.hasCalibrated ? 'Recalibrate' : 'Open Calibration'}
-            </Text>
-          </Pressable>
-
-          <Pressable onPress={handleShareLog} style={[styles.calibButton, { borderColor: c.bd2, marginTop: 8 }]}>
-            <Text style={{ color: c.tx2, fontWeight: '600' }}>Share Calibration Log</Text>
-          </Pressable>
+          <MenuRow
+            first
+            title="Calibration"
+            subtitle={calibrationSummary}
+            onPress={() => navigation.navigate('calibrationSettings')}
+            c={c}
+          />
+          <MenuRow
+            title="Sonification"
+            subtitle={sonificationSummary}
+            onPress={() => navigation.navigate('sonificationSettings')}
+            c={c}
+          />
         </View>
 
-        <Text style={[styles.sectionLabel, { color: c.tx3, marginTop: 20 }]}>SONIFICATION</Text>
-        <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Tonal Range</Text>
-          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
-            Your movement is represented as a single voice, blending all three axes together.
-            Choose the tonal range for the sonification.
-          </Text>
-
-          <View style={styles.pillRow}>
-            {VOICE_OPTIONS.map((v) => {
-              const selected = currentVoice === v.key;
-              return (
-                <Pressable
-                  key={v.key}
-                  onPress={() => handleVoiceSelect(v.key)}
-                  style={[
-                    styles.pill,
-                    {
-                      borderColor: selected ? c.info : c.bd3,
-                      backgroundColor: selected ? c.bgInfo : c.bg1,
-                    },
-                  ]}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: selected ? c.info : c.tx1 }}>{v.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {currentVoice === 'custom' && customExpanded && (
-            <View style={[styles.customPane, { borderColor: c.bd3 }]}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: c.tx1, marginBottom: 14 }}>Custom Tonal Range</Text>
-
-              <View style={styles.sliderLabelRow}>
-                <Text style={{ fontSize: 13, color: c.tx2 }}>Lower</Text>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: c.tx1 }}>{Math.round(customMinHz)}hz</Text>
-              </View>
-              <Slider
-                minimumValue={CUSTOM_RANGE_SLIDER_MIN}
-                maximumValue={CUSTOM_RANGE_SLIDER_MAX}
-                step={1}
-                value={customMinHz}
-                onValueChange={commitMin}
-                minimumTrackTintColor={c.info}
-                maximumTrackTintColor={c.bd3}
-                thumbTintColor={c.info}
-                style={styles.slider}
-              />
-
-              <View style={[styles.sliderLabelRow, { marginTop: 10 }]}>
-                <Text style={{ fontSize: 13, color: c.tx2 }}>Upper</Text>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: c.tx1 }}>{Math.round(customMaxHz)}hz</Text>
-              </View>
-              <Slider
-                minimumValue={CUSTOM_RANGE_SLIDER_MIN}
-                maximumValue={CUSTOM_RANGE_SLIDER_MAX}
-                step={1}
-                value={customMaxHz}
-                onValueChange={commitMax}
-                minimumTrackTintColor={c.info}
-                maximumTrackTintColor={c.bd3}
-                thumbTintColor={c.info}
-                style={styles.slider}
-              />
-
-              <View style={[styles.divider, { backgroundColor: c.bd3, marginVertical: 16 }]} />
-
-              <View style={styles.numericFieldRow}>
-                <View style={styles.numericField}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: c.tx3, marginBottom: 6 }}>Lower</Text>
-                  <TextInput
-                    value={minText}
-                    onChangeText={handleMinTextChange}
-                    onBlur={handleMinBlur}
-                    keyboardType="number-pad"
-                    style={[styles.numericInput, { borderColor: c.bd3, color: c.tx1, backgroundColor: c.bg1 }]}
-                  />
-                </View>
-                <View style={styles.numericField}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: c.tx3, marginBottom: 6 }}>Upper</Text>
-                  <TextInput
-                    value={maxText}
-                    onChangeText={handleMaxTextChange}
-                    onBlur={handleMaxBlur}
-                    keyboardType="number-pad"
-                    style={[styles.numericInput, { borderColor: c.bd3, color: c.tx1, backgroundColor: c.bg1 }]}
-                  />
-                </View>
-              </View>
-            </View>
-          )}
-        </View>
+        {/* THIRTY-FOURTH follow-up: app version and build number, read from
+            the iOS bundle (CFBundleShortVersionString / CFBundleVersion — the
+            Version and Build set in Xcode, i.e. what TestFlight shows). */}
+        <Text style={{ fontSize: 12, color: c.tx3, textAlign: 'center', marginTop: 24, marginBottom: 24 }}>
+          SteadyPoint {appVersionLabel()}
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -336,38 +94,6 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { padding: 18, paddingBottom: 40 },
   h1: { fontSize: 22, fontWeight: '500', marginBottom: 20 },
-  sectionLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.6, marginBottom: 8 },
-  card: { borderRadius: radii.lg, borderWidth: 1, padding: 16 },
-  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  pill: { borderWidth: 1.5, borderRadius: radii.lg, paddingHorizontal: 16, paddingVertical: 10 },
-  presetGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  presetCell: {
-    flexBasis: '47%',
-    flexGrow: 1,
-    borderWidth: 1.5,
-    borderRadius: radii.lg,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  divider: { height: 1, marginVertical: 14 },
-  calibRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderTopWidth: 1,
-  },
-  calibButton: { borderWidth: 1.5, borderRadius: radii.lg, paddingVertical: 12, alignItems: 'center', marginTop: 14 },
-  customPane: { borderTopWidth: 1, marginTop: 16, paddingTop: 16 },
-  sliderLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 },
-  slider: { width: '100%', height: 36 },
-  numericFieldRow: { flexDirection: 'row', gap: 12 },
-  numericField: { flex: 1 },
-  numericInput: {
-    borderWidth: 1.5,
-    borderRadius: radii.lg,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  card: { borderRadius: radii.lg, borderWidth: 1, paddingHorizontal: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, gap: 12 },
 });

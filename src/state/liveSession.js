@@ -140,18 +140,13 @@ export function getNoiseFloorG() {
 let tremorBandMinHz = 3;
 let tremorBandMaxHz = 14;
 
-// Whether band-filtering should actually be APPLIED this session — true
-// only once the user has genuinely run Calibration Mode at least once
-// (see sessionLogic.js's startSession(), which derives this from
-// settings.lastCalibratedAt). A user who instead picks a manual full-scale
-// preset (Settings > Calibration > Full-scale range) never touches
-// tremorBandMinHz/tremorBandMaxHz at all, so without this flag those two
-// values would silently sit at the factory default (3-14Hz) and still get
-// applied as an invisible filter the user never saw or agreed to — this
-// flag keeps band-filtering opt-in to people who've actually measured
-// their own band, rather than something that happens to everyone by
-// default. When false, updateLiveMetrics() below falls back to plain
-// broadband rmsOf(), i.e. the original pre-band-filter behavior.
+// Whether band-filtering should actually be APPLIED this session — set from
+// settings.bandFilterEnabled at session start (see sessionLogic.js's
+// startSession()). THIRTY-FIFTH follow-up: that's now an explicit switch on
+// Settings > Calibration (saving a wizard calibration turns it on). It
+// stays opt-in rather than applying the factory-default 3-14Hz band to
+// everyone. When false, updateLiveMetrics() below uses plain broadband
+// rmsOf(), i.e. the original pre-band-filter behavior.
 let tremorBandActive = false;
 
 export function setTremorBand(minHz, maxHz, active = false) {
@@ -353,11 +348,9 @@ function updateLiveMetrics() {
   // with a soft taper at the band edges to accommodate essential tremor's
   // wider, more individually-variable frequency range compared to
   // Parkinsonian tremor) — but ONLY once tremorBandActive is true, i.e.
-  // the user has actually run Calibration Mode at least once (see
-  // setTremorBand() above for why). Someone who's only ever picked a
-  // manual full-scale preset gets the original, unfiltered broadband
-  // rmsOf() instead, so a factory-default band they never saw or measured
-  // never silently narrows their reading.
+  // band filtering is switched on (settings.bandFilterEnabled — see
+  // setTremorBand() above). Otherwise this uses the original, unfiltered
+  // broadband rmsOf().
   // THIRTY-FIRST follow-up: the broadband RMS is always computed now (it's
   // cheap) and saved alongside the level, so sessions stay comparable even
   // across band changes — see the push below.

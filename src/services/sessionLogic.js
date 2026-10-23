@@ -342,15 +342,15 @@ export function startSession({ state, actions, navigation, overrides, origin = '
   // (was ignored in favour of dsp.js's built-in default). After
   // setFullScaleG() — it's validated against it.
   live.setNoiseFloorG(effective.settings?.noiseFloorG);
-  // Band-filtering only activates once the user has actually run
-  // Calibration Mode at least once (lastCalibratedAt is only ever set by
-  // CalibrationResultsScreen.js on real completion — unlike hasCalibrated,
-  // it's never backfilled true for grandfathered/preset-only users) — see
-  // setTremorBand() in liveSession.js for why this matters.
+  // Band filtering follows the explicit settings.bandFilterEnabled switch
+  // (THIRTY-FIFTH follow-up; Settings > Calibration). Saving a wizard
+  // calibration turns it on; users can also turn it on/off by hand. Existing
+  // users were migrated from the old rule (on once lastCalibratedAt was set)
+  // in persistence.js — see setTremorBand() in liveSession.js.
   live.setTremorBand(
     effective.settings?.tremorBandMinHz,
     effective.settings?.tremorBandMaxHz,
-    !!effective.settings?.lastCalibratedAt,
+    !!effective.settings?.bandFilterEnabled, // THIRTY-FIFTH follow-up: explicit switch (Settings > Calibration)
   );
   setActiveVoice(effective.settings?.sonificationVoice);
   // Only meaningful when the "custom" tonal range voice is selected, but

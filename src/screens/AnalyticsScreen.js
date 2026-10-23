@@ -40,7 +40,15 @@ export default function AnalyticsScreen() {
   const c = useTheme();
   const navigation = useNavigation();
   const { state, actions } = useStore();
-  const [periodKey, setPeriodKey] = useState('30d');
+  // THIRTY-FOURTH follow-up: start on the user's last chosen range
+  // (settings.analyticsPeriod, saved across launches); 30D if none yet.
+  const [periodKey, setPeriodKeyState] = useState(() =>
+    PERIODS.some((p) => p.key === state.settings?.analyticsPeriod) ? state.settings.analyticsPeriod : '30d',
+  );
+  const setPeriodKey = (key) => {
+    setPeriodKeyState(key);
+    if (state.settings?.analyticsPeriod !== key) actions.updateSettings({ analyticsPeriod: key });
+  };
   const [calmType, setCalmType] = useState('all');
   const [trendType, setTrendType] = useState('all');
   const [trendMenuOpen, setTrendMenuOpen] = useState(false);

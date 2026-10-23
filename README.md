@@ -2455,6 +2455,68 @@ short explanatory caption under the chart.
   1g full scale · 0.006g noise floor".
 - New helper `dateFromIso()` in `utils/analyticsStats.js`.
 
+## Thirty-fourth follow-up — version in Settings, remembered Analytics range
+
+- **Version and build number** at the bottom of Settings, e.g.
+  "SteadyPoint Version 1.2 (34)": the Version and Build set in Xcode
+  (CFBundleShortVersionString / CFBundleVersion — what TestFlight shows),
+  read with the new dependency **react-native-device-info 14.1.1**. Needs
+  `npm install` and `cd ios && pod install` before building. If the native
+  module is missing the label is simply left blank.
+- **Analytics date range remembered.** Choosing 7D / 30D / All saves it as
+  `settings.analyticsPeriod`; Analytics opens on it at the next launch
+  (30D if never chosen).
+- **Settings now saved as soon as they change.** Previously settings changed
+  outside a session (full-scale preset, voice, custom tonal range) were only
+  saved by the next full save — usually at the end of a session — so closing
+  the app first lost them. App.js now calls the new
+  `persistence.persistSettings()` whenever `state.settings` changes after
+  launch (never on launch itself, so saved settings can't be overwritten by
+  defaults). It writes settings + mode + meta, so it also works for a user
+  who hasn't finished a session yet. Demo mode still never saves.
+
+## Thirty-fifth follow-up — Settings split into Calibration and Sonification sub-pages
+
+**Main Settings page** is now a short menu: **Calibration** (subtitle e.g.
+"1.00 g full scale · band filtering on") and **Sonification** (subtitle: the
+voice, or "Custom · 200–700 Hz"), each opening its own sub-page, plus the
+version/build line at the bottom. The full-scale preset grid (Max/High/Low/
+Min-sensitivity) and its wording are removed.
+
+**Settings > Calibration** (`screens/CalibrationSettingsScreen.js`):
+- Shows full scale range, noise floor, minimum and maximum tremor band and
+  band filtering read-only. **Edit values** turns the four values into
+  number fields (decimal keypad, − / + buttons, allowed-range hint) and band
+  filtering into a switch, with **Save** / **Cancel** and **Restore defaults**
+  (0.35 g, 0.006 g, 3.0–14.0 Hz, filtering off).
+- Limits (`utils/calibrationLimits.js`): full scale 0.10–4.00 g (step 0.01);
+  noise floor 0.000–0.050 g (step 0.001) and under 10% of full scale; band
+  minimum 0.5–18.0 Hz and at least 1 Hz below the maximum; band maximum
+  1.5–20.0 Hz (step 0.1). Values outside 3–12 Hz get a warning but are
+  allowed. Errors show under the field and keep Save disabled.
+- Save asks for confirmation, explaining the effect: full scale / noise floor
+  changes re-display past sessions; band or filtering changes apply to new
+  sessions only and are marked on Analytics. A format-only edit ("1" vs
+  "1.00") just leaves edit mode. Leaving with unsaved edits (back button or
+  swipe) asks whether to discard them.
+- Manual saves record `calibrationSource: 'manual'` and `calibrationSetAt`;
+  they do NOT set `lastCalibratedAt`, so they don't reset Home's 90-day
+  recalibration reminder. A note shows "Last set manually on …" / "Last set
+  by the calibration wizard on …" / "Using the default values."
+- Below it: the calibration wizard (Open Calibration / Recalibrate) and
+  Share Calibration Log. After saving wizard results, the app now returns to
+  wherever the wizard was opened from (this page, or Home's reminder);
+  first-launch calibration still continues into the app.
+
+**Band filtering is now an explicit setting** (`settings.bandFilterEnabled`),
+used by `startSession()` instead of "has a wizard calibration been saved".
+Saving wizard results turns it on (and sets `calibrationSource: 'wizard'`).
+Existing users are migrated in `persistLoad()` to exactly what they had:
+on if they'd saved a wizard calibration, otherwise off.
+
+**Settings > Sonification** (`screens/SonificationSettingsScreen.js`): the
+former Sonification section, moved unchanged.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop
