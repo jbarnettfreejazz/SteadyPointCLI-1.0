@@ -71,7 +71,7 @@ export default function CalibrationScreen({ route }) {
     }
     trackerRef.current = createSustainedPeakTracker();
     setMeterState({ runningPeak: 0, currentRms: 0, sustainedValue: 0, sustainedSeconds: 0, reached: false });
-    live.beginSessionBuffers();
+    live.beginSessionBuffers({ keepRawSamples: true }); // THIRTY-SIXTH follow-up: band detection needs the raw samples
     sendCommand('START');
     setPhase('active');
 

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -10,7 +10,17 @@ import { sessionIntensity, bandFor, displayScale } from '../utils/intensityStats
 import { todayKey } from '../utils/sessionStats';
 import { shortDate } from '../utils/analyticsStats';
 import { BrainIcon, BookIcon, WalkIcon, InfinityIcon } from '../components/TabIcons';
-import { startSession, startCustomSession, resetSetupConfig, loadPinnedForEdit, deletePinnedSession } from '../services/sessionLogic';
+import {
+  startSession,
+  startCustomSession,
+  resetSetupConfig,
+  loadPinnedForEdit,
+  deletePinnedSession,
+  getResumableSession,
+  resumeSession,
+  declineResume,
+} from '../services/sessionLogic';
+import { RESUME_WINDOW_MIN } from '../utils/sessionRecord';
 import CustomSessionRow from '../components/CustomSessionRow';
 import { HOME_CUSTOM_SESSION_LIMIT, sortByRecentUse } from '../utils/customSessions';
 
@@ -147,6 +157,39 @@ export default function HomeScreen() {
   const { state, actions } = useStore();
   const { connect, disconnect } = useBLE();
   const stats = useHomeStats(state);
+
+  // THIRTY-SIXTH follow-up: after a session ended because the device
+  // disconnected, reconnecting within RESUME_WINDOW_MIN offers to continue
+  // it (timed or continuous). Checked whenever the connection comes up.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const wasConnectedRef = useRef(state.isConnected);
+  useEffect(() => {
+    const justConnected = state.isConnected && !wasConnectedRef.current;
+    wasConnectedRef.current = state.isConnected;
+    if (!justConnected) return;
+    let cancelled = false;
+    getResumableSession().then((offer) => {
+      if (cancelled || !offer) return;
+      const ago = offer.minutesAgo < 1 ? 'less than a minute ago' : `${offer.minutesAgo} min ago`;
+      Alert.alert(
+        'Continue your session?',
+        `Your ${offer.isContinuous ? 'continuous ' : ''}session was interrupted ${ago} when the device disconnected. ` +
+          `You can continue it within ${RESUME_WINDOW_MIN} minutes of the disconnect.`,
+        [
+          { text: 'Keep it ended', style: 'cancel', onPress: () => declineResume() },
+          {
+            text: 'Continue session',
+            onPress: () => resumeSession({ state: stateRef.current, actions, navigation }),
+          },
+        ],
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isConnected]);
 
   const needsRecalibration = useMemo(() => {
     const last = state.settings.lastCalibratedAt;

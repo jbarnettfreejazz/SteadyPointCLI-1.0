@@ -134,6 +134,16 @@ export function sessionTrace(s, scale) {
   return trace.map((v) => Math.round(rescaleLevel(v, from, scale)));
 }
 
+// THIRTY-SIXTH follow-up: long sessions save the largest motion in each
+// trace point's time slice (rmsPeakTraceG); scored on `scale` (or the
+// session's own) for the chart's peak line. null when not saved.
+export function sessionPeakTrace(s, scale) {
+  const p = s?.rmsPeakTraceG;
+  if (!Array.isArray(p) || p.length === 0 || p.length !== (s.intensityTrace || []).length) return null;
+  const sc = scale || sessionScale(s);
+  return p.map((g) => rmsToLevel(g, sc.fullScaleG, sc.noiseFloorG));
+}
+
 // THIRTY-SECOND follow-up: a session's median intensity measured on ALL
 // frequencies (rmsAllTraceG — includes voluntary movement, independent of
 // the band), scored on `scale`. null when the session predates that field

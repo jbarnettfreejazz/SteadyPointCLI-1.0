@@ -75,12 +75,25 @@ function freshState() {
     dispZ: Array(SPARK_LEN).fill(0),
     sparkBuf: Array(SPARK_LEN).fill(0),
     tremorHistory: Array(SPARK_LEN).fill(0),
-    sessionBuffer: [], // { t (seconds), x, y, z }
-    levelTrace: [], // tremorLevel at each updateLiveMetrics tick — full session trace for scoring
-    // THIRTY-FIRST follow-up: the motion (in g) behind each levelTrace entry,
-    // index-aligned with it — see updateLiveMetrics().
-    rmsTraceG: [], // the value levelTrace was scored from (in-band when band filtering is on)
+    // THIRTY-SIXTH follow-up: a session's recording is now just the motion
+    // (in g) behind each intensity reading, one per updateLiveMetrics tick
+    // (~0.3 s). The raw ~50 Hz sensor samples (sessionBuffer) and the 0-100
+    // levelTrace are no longer kept: intensity is re-scored from these g
+    // values when the session ends (utils/sessionRecord.js), so memory stays
+    // small for multi-hour sessions.
+    rmsTraceG: [], // what intensity was scored from (in-band when band filtering is on)
     rmsAllTraceG: [], // all-frequencies (broadband) RMS — independent of every calibration setting
+    // Calibration in effect from reading i on: [{ i, atSec, fullScaleG,
+    // noiseFloorG, tremorBandMinHz, tremorBandMaxHz, tremorBandFiltered }].
+    // One entry at the start, plus one per mid-session change.
+    segments: [],
+    events: [], // other chart events, e.g. { atSec, kind: 'reconnect' }
+    packetCount: 0,
+    // Raw sensor samples { t (seconds), x, y, z } — only kept for the short
+    // Calibration Mode recording (beginSessionBuffers({ keepRawSamples: true })),
+    // whose band detection needs them; never for sessions.
+    keepRawSamples: false,
+    sessionBuffer: [],
     tremorLevel: 0,
     displayLevel: 0,
     liveFreqHz: 0,
@@ -91,7 +104,6 @@ function freshState() {
     packetTimes: [],
     elapsed: 0,
     isRecording: false,
-    hasUnsaved: false,
   };
 }
 
@@ -228,20 +240,91 @@ export function resetLiveSession() {
   notify();
 }
 
-// Called at the start of a new session — resets buffers but doesn't
-// touch timers (sessionLogic.startSession owns those).
-export function beginSessionBuffers() {
-  state = { ...freshState(), isRecording: true };
+function currentCalibration() {
+  return {
+    fullScaleG,
+    noiseFloorG,
+    tremorBandMinHz,
+    tremorBandMaxHz,
+    tremorBandFiltered: tremorBandActive,
+  };
+}
+
+// Called at the start of a new session (after the calibration setters
+// above) — resets buffers but doesn't touch timers (sessionLogic.startSession
+// owns those). Records the calibration the session starts with.
+export function beginSessionBuffers({ keepRawSamples = false } = {}) {
+  state = { ...freshState(), isRecording: true, keepRawSamples, segments: [{ i: 0, atSec: 0, ...currentCalibration() }] };
   notify();
 }
 
+// What the session has recorded so far (live arrays — callers mustn't mutate).
+export function getRecording() {
+  return {
+    rmsTraceG: state.rmsTraceG,
+    rmsAllTraceG: state.rmsAllTraceG,
+    segments: state.segments,
+    events: state.events,
+    packetCount: state.packetCount,
+    elapsed: state.elapsed,
+    liveFreqHz: state.liveFreqHz,
+  };
+}
+
 export function stopRecordingBuffers() {
-  const buffer = state.sessionBuffer;
-  const levelTrace = state.levelTrace;
-  const { rmsTraceG, rmsAllTraceG } = state;
+  const recording = { ...getRecording(), buffer: state.sessionBuffer };
   state = { ...state, isRecording: false };
   notify();
-  return { buffer, levelTrace, rmsTraceG, rmsAllTraceG };
+  return recording;
+}
+
+// THIRTY-SIXTH follow-up: continue a session after a reconnect — puts back
+// what was recorded before the disconnect (from the checkpoint) and the
+// calibration it ended on. Timers are started separately (startTimers
+// continues the clock from `elapsed`).
+export function restoreRecording({ rmsTraceG = [], rmsAllTraceG = [], segments = [], events = [], packetCount = 0, elapsed = 0, liveFreqHz = 0 }) {
+  const last = segments[segments.length - 1];
+  if (last) {
+    setFullScaleG(last.fullScaleG);
+    setNoiseFloorG(last.noiseFloorG);
+    setTremorBand(last.tremorBandMinHz, last.tremorBandMaxHz, last.tremorBandFiltered);
+  }
+  state = {
+    ...freshState(),
+    isRecording: true,
+    rmsTraceG: [...rmsTraceG],
+    rmsAllTraceG: [...rmsAllTraceG],
+    segments: segments.length ? [...segments] : [{ i: 0, atSec: 0, ...currentCalibration() }],
+    events: [...events],
+    packetCount,
+    elapsed,
+    liveFreqHz,
+  };
+  notify();
+}
+
+// THIRTY-SIXTH follow-up: change the calibration during a session (the
+// Recording screen's "Edit Calibration Settings"). Takes effect on the next
+// reading; while recording, the change is noted as a new segment so the
+// session can be re-scored and the change marked on its chart.
+export function applyCalibration({ fullScaleG: fs, noiseFloorG: nf, tremorBandMinHz: min, tremorBandMaxHz: max, bandFilterEnabled }) {
+  const before = currentCalibration();
+  setFullScaleG(fs);
+  setNoiseFloorG(nf);
+  setTremorBand(min, max, bandFilterEnabled);
+  const after = currentCalibration();
+  const changed = Object.keys(after).some((k) => after[k] !== before[k]);
+  if (changed && state.isRecording) {
+    state.segments = [...state.segments, { i: state.rmsTraceG.length, atSec: state.elapsed, ...after }];
+  }
+  return changed;
+}
+
+// `extra` e.g. { gapSec } for a reconnect (THIRTY-SEVENTH follow-up: lets
+// the long-session chart place clock times correctly after a gap).
+export function addSessionEvent(kind, extra = {}) {
+  if (!state.isRecording) return;
+  state.events = [...state.events, { atSec: state.elapsed, kind, ...extra }];
 }
 
 // Mirrors pushPacket(ax, ay, az) — buffer bookkeeping only, no metrics math
@@ -283,8 +366,8 @@ export function pushPacket(ax, ay, az) {
   state.packetTimes = state.packetTimes.filter((t) => now - t < 2000);
 
   if (state.isRecording) {
-    state.sessionBuffer.push({ t: now / 1000, x: ax, y: ay, z: az });
-    state.hasUnsaved = true;
+    state.packetCount += 1;
+    if (state.keepRawSamples) state.sessionBuffer.push({ t: now / 1000, x: ax, y: ay, z: az });
   }
 
   // Audio updates fire per packet (~50Hz) again — retesting specifically
@@ -364,10 +447,8 @@ function updateLiveMetrics() {
   state.tremorHistory = state.sparkBuf;
 
   if (state.isRecording) {
-    state.levelTrace.push(tremorLevel);
-    // THIRTY-FIRST follow-up: the motion behind this reading, in g, before
-    // the 0-100 conversion (which clips at 0 and 100 and depends on full
-    // scale / noise floor). Saved only — nothing displays these yet.
+    // The motion behind this reading, in g, before the 0-100 conversion
+    // (which clips at 0 and 100 and depends on full scale / noise floor).
     state.rmsTraceG.push(rms);
     state.rmsAllTraceG.push(rmsAll);
   }

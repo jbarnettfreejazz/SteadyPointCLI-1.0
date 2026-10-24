@@ -53,18 +53,50 @@ function dayKeyDaysAgo(n) {
 }
 
 const avg = (nums) => (nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null);
+
+// THIRTY-SEVENTH follow-up: session-type filter and duration weighting.
+export const SESSION_TYPES = [
+  { key: 'all', label: 'All sessions' },
+  { key: 'timed', label: 'Timed' },
+  { key: 'continuous', label: 'Continuous' },
+];
+
+// A session's recorded length in seconds (for duration weighting).
+export function sessionSeconds(s) {
+  if (typeof s.elapsedSec === 'number' && s.elapsedSec > 0) return s.elapsedSec;
+  if (typeof s.duration === 'number' && s.duration > 0) return s.duration * 60;
+  return 60;
+}
+
+// Average of `values`, each weighted by its session's length when
+// `weighted` (so a 4-hour session counts 48x a 5-minute one); a plain
+// average otherwise. Rounded; null when empty.
+function wavg(values, sessions, weighted) {
+  if (!values.length) return null;
+  if (!weighted) return avg(values);
+  let sum = 0;
+  let wsum = 0;
+  values.forEach((v, i) => {
+    const w = sessionSeconds(sessions[i]);
+    sum += v * w;
+    wsum += w;
+  });
+  return Math.round(sum / wsum);
+}
 const soundOn = (s) => s.feedbackType === 'both' || s.feedbackType === 'audio';
 
 // Sessions in the period, OLDEST FIRST (allSessions is newest-first), each
 // paired with its intensity info: [{ s, info }]. `scale` (THIRTIETH
 // follow-up, from displayScale(state.settings)) puts every session on the
 // user's current full scale / noise floor.
-export function periodSessions(allSessions, periodKey, scale) {
+// THIRTY-SEVENTH follow-up: `sessionType` 'all' | 'timed' | 'continuous'.
+export function periodSessions(allSessions, periodKey, scale, sessionType = 'all') {
   const period = PERIODS.find((p) => p.key === periodKey) || PERIODS[1];
   const cutoff = period.days ? dayKeyDaysAgo(period.days - 1) : null;
   const today = todayKey();
   return allSessions
     .filter((s) => !cutoff || (s.dateKey >= cutoff && s.dateKey <= today))
+    .filter((s) => sessionType === 'all' || (sessionType === 'continuous' ? !!s.isContinuous : !s.isContinuous))
     .slice()
     .reverse()
     .map((s) => ({ s, info: sessionIntensity(s, scale) }));
@@ -72,20 +104,23 @@ export function periodSessions(allSessions, periodKey, scale) {
 
 // Header tiles: session count (all sessions in the period) and average
 // intensity (mean of each measured session's median).
-export function overview(items) {
+export function overview(items, { weighted = false } = {}) {
   const measured = items.filter((x) => x.info.valid);
-  return { count: items.length, avgIntensity: avg(measured.map((x) => x.info.median)) };
+  return {
+    count: items.length,
+    avgIntensity: wavg(measured.map((x) => x.info.median), measured.map((x) => x.s), weighted),
+  };
 }
 
 // Lowest median intensity in the period (optionally one activity type);
 // ties go to the most recent. pctBelowAvg compares it with the average for
 // the same filter. null when there's no measured session.
-export function calmestSession(items, typeKey = 'all') {
+export function calmestSession(items, typeKey = 'all', { weighted = false } = {}) {
   const pool = items.filter((x) => x.info.valid && (typeKey === 'all' || x.s.activityType === typeKey));
   if (pool.length === 0) return null;
   let best = pool[0];
   for (const x of pool) if (x.info.median <= best.info.median) best = x;
-  const average = avg(pool.map((x) => x.info.median));
+  const average = wavg(pool.map((x) => x.info.median), pool.map((x) => x.s), weighted);
   const pctBelowAvg = average > 0 ? Math.round(((average - best.info.median) / average) * 100) : 0;
   return { ...best, average, pctBelowAvg };
 }
@@ -104,7 +139,7 @@ export function calmestSession(items, typeKey = 'all') {
 //   changes), so it compares across everything. Only sessions recorded
 //   since the thirty-first follow-up have it. No band-change markers.
 //   `scale` is the display scale (displayScale(state.settings)).
-export function intensityTrend(items, typeKey = 'all', { view = 'band', scale } = {}) {
+export function intensityTrend(items, typeKey = 'all', { view = 'band', scale, weighted = false } = {}) {
   const typed = items.filter((x) => typeKey === 'all' || x.s.activityType === typeKey);
   const pts =
     view === 'all'
@@ -113,9 +148,14 @@ export function intensityTrend(items, typeKey = 'all', { view = 'band', scale } 
           .filter((x) => x.m != null)
       : typed.filter((x) => x.info.valid).map((x) => ({ ...x, m: x.info.median }));
   const medians = pts.map((x) => x.m);
+  const ptSessions = pts.map((x) => x.s);
+  // 3-session rolling average (duration-weighted when `weighted`).
   const rolling = medians.map((_, i) => {
-    const win = medians.slice(Math.max(0, i - 2), i + 1);
-    return win.reduce((a, b) => a + b, 0) / win.length;
+    const from = Math.max(0, i - 2);
+    const win = medians.slice(from, i + 1);
+    if (!weighted) return win.reduce((a, b) => a + b, 0) / win.length;
+    const ws = ptSessions.slice(from, i + 1).map(sessionSeconds);
+    return win.reduce((a, v, j) => a + v * ws[j], 0) / ws.reduce((a, w) => a + w, 0);
   });
 
   const markers = pts
@@ -134,6 +174,7 @@ export function intensityTrend(items, typeKey = 'all', { view = 'band', scale } 
 
   const start = view === 'all' ? 0 : sameBandStart(pts);
   const cmp = medians.slice(start);
+  const cmpS = ptSessions.slice(start);
   const suffix = start > 0 ? ' since band change' : '';
   let subtitle = 'Not enough sessions yet';
   if (cmp.length >= 2) {
@@ -142,8 +183,8 @@ export function intensityTrend(items, typeKey = 'all', { view = 'band', scale } 
     // "steady"), which matters more now that comparisons restart at a band
     // change.
     const k = Math.min(3, Math.floor(cmp.length / 2));
-    const first = avg(cmp.slice(0, k));
-    const last = avg(cmp.slice(-k));
+    const first = wavg(cmp.slice(0, k), cmpS.slice(0, k), weighted);
+    const last = wavg(cmp.slice(-k), cmpS.slice(-k), weighted);
     subtitle = first === last ? `Avg steady at ${last}${suffix}` : `Avg ${last < first ? 'down' : 'up'} from ${first} to ${last}${suffix}`;
   } else if (cmp.length === 1) {
     subtitle = start > 0 ? `Avg ${cmp[0]} · 1 session since band change` : `Avg ${cmp[0]}`;
@@ -207,41 +248,51 @@ export function bandsOverTime(items) {
 }
 
 // Average band split across several sessions (for the activity tiles'
-// mini bars), adding to 100.
-function averagePct(measured) {
+// mini bars), adding to 100. Weighted, it's the true share of all the
+// recorded time spent in each band.
+function averagePct(measured, weighted) {
   if (measured.length === 0) return null;
   const sum = { none: 0, mild: 0, moderate: 0, high: 0 };
-  for (const x of measured) for (const b of INTENSITY_BANDS) sum[b.key] += x.info.pct[b.key];
+  for (const x of measured) {
+    const w = weighted ? sessionSeconds(x.s) : 1;
+    for (const b of INTENSITY_BANDS) sum[b.key] += x.info.pct[b.key] * w;
+  }
   return roundTo100(sum);
 }
 
-function group(items, predicate) {
+function group(items, predicate, weighted) {
   const all = items.filter((x) => predicate(x.s));
   const measured = all.filter((x) => x.info.valid);
-  return { count: all.length, avgIntensity: avg(measured.map((x) => x.info.median)), pct: averagePct(measured) };
-}
-
-export function byActivity(items) {
-  return ACTIVITY_TYPES.map((t) => ({ ...t, ...group(items, (s) => s.activityType === t.key) }));
-}
-
-export function soundAndGuide(items) {
   return {
-    soundOn: group(items, soundOn),
-    soundOff: group(items, (s) => !soundOn(s)),
-    withGuide: group(items, (s) => !!s.guideSource),
-    withoutGuide: group(items, (s) => !s.guideSource),
+    count: all.length,
+    avgIntensity: wavg(measured.map((x) => x.info.median), measured.map((x) => x.s), weighted),
+    pct: averagePct(measured, weighted),
+  };
+}
+
+export function byActivity(items, { weighted = false } = {}) {
+  return ACTIVITY_TYPES.map((t) => ({ ...t, ...group(items, (s) => s.activityType === t.key, weighted) }));
+}
+
+export function soundAndGuide(items, { weighted = false } = {}) {
+  return {
+    soundOn: group(items, soundOn, weighted),
+    soundOff: group(items, (s) => !soundOn(s), weighted),
+    withGuide: group(items, (s) => !!s.guideSource, weighted),
+    withoutGuide: group(items, (s) => !s.guideSource, weighted),
   };
 }
 
 // Average dominant frequency, and whether it's stable / rising / falling:
 // first half of the period vs second half, stable within ±0.5 Hz (agreed).
 export const FREQ_STABLE_HZ = 0.5;
-export function frequencySummary(items) {
-  const freqs = items.map((x) => x.s.freq).filter((f) => typeof f === 'number' && f > 0);
+export function frequencySummary(items, { weighted = false } = {}) {
+  const withF = items.filter((x) => typeof x.s.freq === 'number' && x.s.freq > 0);
+  const freqs = withF.map((x) => x.s.freq);
   if (freqs.length === 0) return { avgHz: null, trend: null };
   const mean = (a) => a.reduce((t, v) => t + v, 0) / a.length;
-  const avgHz = Math.round(mean(freqs) * 10) / 10;
+  const ws = withF.map((x) => (weighted ? sessionSeconds(x.s) : 1));
+  const avgHz = Math.round((freqs.reduce((t, f, i) => t + f * ws[i], 0) / ws.reduce((t, w) => t + w, 0)) * 10) / 10;
   if (freqs.length < 2) return { avgHz, trend: null };
   const half = Math.floor(freqs.length / 2);
   const diff = mean(freqs.slice(freqs.length - half)) - mean(freqs.slice(0, half));

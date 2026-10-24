@@ -15,7 +15,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { MedianIntensityRing, TimeInBands } from '../components/IntensityDisplay';
-import { sessionIntensity, intensityHeadline, sessionTrace, sessionReduction, displayScale } from '../utils/intensityStats';
+import { sessionIntensity, intensityHeadline, sessionTrace, sessionReduction, displayScale, sessionPeakTrace } from '../utils/intensityStats';
 import IntensityChart from '../components/IntensityChart';
 import { persistSave } from '../services/persistence';
 import { saveSetupAsCustomSession } from '../services/sessionLogic';
@@ -131,7 +131,14 @@ export default function SummaryScreen() {
         </View>
 
         <View style={styles.chartWrap}>
-          <IntensityChart trace={sessionTrace(r, scale)} durationSec={r.duration * 60} colors={c} />
+          <IntensityChart
+            trace={sessionTrace(r, scale)}
+            peaks={sessionPeakTrace(r, scale)}
+            events={r.events}
+            startedAt={r.startedAt}
+            durationSec={r.elapsedSec ?? r.duration * 60}
+            colors={c}
+          />
         </View>
 
         {r.samples > 0 && (

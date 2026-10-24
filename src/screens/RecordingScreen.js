@@ -1,12 +1,14 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
 import { orbSize, orbRGB, fmt } from '../utils/dsp';
-import { endSession } from '../services/sessionLogic';
+import { endSession, applyCalibrationDuringSession, noteFeedbackType } from '../services/sessionLogic';
+import { onSessionPersisted } from '../services/sessionCheckpoint';
+import CalibrationEditor from '../components/CalibrationEditor';
 import { setAudioHook, getLiveState } from '../state/liveSession';
 import * as audioService from '../services/audio';
 import { playGuideTrack, stopGuideTrack } from '../services/guideTrackPlayer';
@@ -97,6 +99,22 @@ export default function RecordingScreen() {
       ? c.warning
       : c.danger;
 
+  // THIRTY-SIXTH follow-up: keep the session record's sound setting in step
+  // with the sonification switch (continuous sessions).
+  useEffect(() => {
+    noteFeedbackType(state.config.feedbackType);
+  }, [state.config.feedbackType]);
+
+  // THIRTY-SIXTH follow-up: "Edit Calibration Settings" during a continuous
+  // session. Saving applies the values to this session right away and saves
+  // them as the app's calibration (same as Settings > Calibration).
+  const [calibrationOpen, setCalibrationOpen] = useState(false);
+  const handleCalibrationSave = (patch) => {
+    actions.updateSettings({ ...patch, calibrationSource: 'manual', calibrationSetAt: new Date().toISOString() });
+    applyCalibrationDuringSession(patch);
+    setCalibrationOpen(false);
+  };
+
   const handleEnd = () => {
     endSession({ state, actions, navigation, secs: live.elapsed, byTimer: false });
   };
@@ -120,12 +138,20 @@ export default function RecordingScreen() {
 
   // Auto-persist once a session lands in allSessions (endSession dispatches
   // asynchronously, so we save from an effect rather than right after calling it).
+  // THIRTY-SIXTH follow-up: watches the list itself, not just its length — a
+  // continued session's end updates its existing record. Once saved, a
+  // finished session's checkpoint is removed.
+  const firstRenderRef = useRef(true);
   useEffect(() => {
+    if (firstRenderRef.current) {
+      firstRenderRef.current = false;
+      return;
+    }
     if (state.allSessions.length > 0) {
-      persistSaveLatest(state);
+      persistSaveLatest(state).then(() => onSessionPersisted());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.allSessions.length]);
+  }, [state.allSessions]);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
@@ -185,6 +211,15 @@ export default function RecordingScreen() {
           </View>
         )}
 
+        {isContinuous && (
+          <Pressable
+            onPress={() => setCalibrationOpen(true)}
+            style={[styles.calibrationButton, { backgroundColor: c.bg2, borderColor: c.bd3 }]}
+            accessibilityRole="button">
+            <Text style={{ color: c.info, fontSize: 14, fontWeight: '600' }}>Edit Calibration Settings</Text>
+          </Pressable>
+        )}
+
         <Text style={{ color: c.tx2, fontSize: 13, marginTop: 4, textAlign: 'center' }}>
           {live.liveFreqHz > 0 ? `${live.liveFreqHz.toFixed(1)} Hz` : '—'}
         </Text>
@@ -235,6 +270,34 @@ export default function RecordingScreen() {
           <Text style={{ color: c.tx1, fontWeight: '700' }}>End Session</Text>
         </Pressable>
       </ScrollView>
+
+      <Modal
+        visible={calibrationOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setCalibrationOpen(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: c.bg1 }}>
+          <ScrollView
+            contentContainerStyle={styles.modalScroll}
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets>
+            <Text style={{ fontSize: 20, fontWeight: '600', color: c.tx1, marginBottom: 4 }}>Calibration</Text>
+            <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 8 }}>
+              Changes apply to this session right away and are saved as your calibration settings. The session keeps
+              recording while you edit.
+            </Text>
+            {calibrationOpen && (
+              <CalibrationEditor
+                settings={state.settings}
+                onSave={handleCalibrationSave}
+                onCancel={() => setCalibrationOpen(false)}
+                c={c}
+                context="session"
+              />
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -252,7 +315,7 @@ function LegendDot({ color, label, textColor }) {
 // sessionLogic.js and persistence.js during the initial save trigger.
 function persistSaveLatest(state) {
   const { persistSave } = require('../services/persistence');
-  persistSave(state);
+  return persistSave(state);
 }
 
 const styles = StyleSheet.create({
@@ -277,6 +340,15 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
   },
+  calibrationButton: {
+    width: '90%',
+    marginTop: 10,
+    paddingVertical: 12,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  modalScroll: { padding: 20, paddingBottom: 40 },
   sevLabel: { fontSize: 18, fontWeight: '700' },
   axisRow: { flexDirection: 'row', gap: 16, marginTop: 24, width: '80%' },
   axisItem: { flex: 1, alignItems: 'center' },

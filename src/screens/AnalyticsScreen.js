@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
@@ -8,6 +8,7 @@ import { startSimilarSession } from '../services/sessionLogic';
 import { bandFor, INTENSITY_BANDS, displayScale } from '../utils/intensityStats';
 import {
   PERIODS,
+  SESSION_TYPES,
   ACTIVITY_TYPES,
   periodSessions,
   overview,
@@ -49,6 +50,21 @@ export default function AnalyticsScreen() {
     setPeriodKeyState(key);
     if (state.settings?.analyticsPeriod !== key) actions.updateSettings({ analyticsPeriod: key });
   };
+  // THIRTY-SEVENTH follow-up: session type (All / Timed / Continuous) and
+  // duration weighting, both remembered like the date range.
+  const [sessionType, setSessionTypeState] = useState(() =>
+    SESSION_TYPES.some((x) => x.key === state.settings?.analyticsSessionType) ? state.settings.analyticsSessionType : 'all',
+  );
+  const setSessionType = (key) => {
+    setSessionTypeState(key);
+    if (state.settings?.analyticsSessionType !== key) actions.updateSettings({ analyticsSessionType: key });
+  };
+  const [weighted, setWeightedState] = useState(!!state.settings?.analyticsWeighted);
+  const setWeighted = (on) => {
+    setWeightedState(on);
+    actions.updateSettings({ analyticsWeighted: on });
+  };
+  const w = { weighted };
   const [calmType, setCalmType] = useState('all');
   const [trendType, setTrendType] = useState('all');
   const [trendMenuOpen, setTrendMenuOpen] = useState(false);
@@ -59,14 +75,18 @@ export default function AnalyticsScreen() {
   const period = PERIODS.find((p) => p.key === periodKey);
   // THIRTIETH follow-up: every session on the current full scale / noise floor.
   const scale = useMemo(() => displayScale(state.settings), [state.settings]);
-  const items = useMemo(() => periodSessions(state.allSessions, periodKey, scale), [state.allSessions, periodKey, scale]);
-  const ov = overview(items);
-  const calmest = calmestSession(items, calmType);
-  const trend = intensityTrend(items, trendType, { view: trendView, scale });
+  const items = useMemo(
+    () => periodSessions(state.allSessions, periodKey, scale, sessionType),
+    [state.allSessions, periodKey, scale, sessionType],
+  );
+  const ov = overview(items, w);
+  const calmest = calmestSession(items, calmType, w);
+  const trend = intensityTrend(items, trendType, { view: trendView, scale, weighted });
   const bands = bandsOverTime(items);
-  const activity = byActivity(items);
-  const sg = soundAndGuide(items);
-  const freq = frequencySummary(items);
+  const activity = byActivity(items, w);
+  const sg = soundAndGuide(items, w);
+  const freq = frequencySummary(items, w);
+  const typeWord = sessionType === 'all' ? '' : `${sessionType} `;
   const bandColor = (v) => (v == null ? c.tx3 : c[bandFor(v).color]);
 
   return (
@@ -102,6 +122,37 @@ export default function AnalyticsScreen() {
               </Pressable>
             );
           })}
+        </View>
+
+        {/* THIRTY-SEVENTH follow-up: session type + duration weighting */}
+        <View style={[styles.typeSegment, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+          {SESSION_TYPES.map((x) => {
+            const on = x.key === sessionType;
+            return (
+              <Pressable
+                key={x.key}
+                onPress={() => setSessionType(x.key)}
+                style={[styles.typeItem, on && { backgroundColor: c.bg1, borderColor: c.info }]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: on ? c.info : c.tx2 }}>{x.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={styles.weightRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, color: c.tx1 }}>Weight averages by session length</Text>
+            <Text style={{ fontSize: 11, color: c.tx3, marginTop: 2 }}>
+              {weighted ? 'Longer sessions count more in every average.' : 'Every session counts equally.'}
+            </Text>
+          </View>
+          <Switch
+            value={weighted}
+            onValueChange={setWeighted}
+            trackColor={{ true: c.info }}
+            accessibilityLabel="Weight averages by session length"
+          />
         </View>
 
         {/* Sessions / Avg intensity */}
@@ -163,7 +214,8 @@ export default function AnalyticsScreen() {
             </>
           ) : (
             <Text style={{ fontSize: 13, color: c.tx3, paddingVertical: 12 }}>
-              No measured {calmType === 'all' ? '' : `${calmType} `}sessions {period.key === 'all' ? 'yet' : `in the ${period.sub}`}.
+              No measured {typeWord}
+              {calmType === 'all' ? '' : `${calmType} `}sessions {period.key === 'all' ? 'yet' : `in the ${period.sub}`}.
             </Text>
           )}
         </View>
@@ -384,6 +436,9 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   h1: { fontSize: 22, fontWeight: '600' },
   historyPill: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  typeSegment: { flexDirection: 'row', borderRadius: radii.md, borderWidth: 1, padding: 3, marginBottom: 10 },
+  typeItem: { flex: 1, alignItems: 'center', paddingVertical: 6, borderRadius: radii.md - 2, borderWidth: 1, borderColor: 'transparent' },
+  weightRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
   segment: { flexDirection: 'row', borderRadius: radii.md, padding: 3, marginBottom: 14 },
   segmentItem: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: radii.md - 2 },
   twoCol: { flexDirection: 'row', gap: 10, marginBottom: 12 },

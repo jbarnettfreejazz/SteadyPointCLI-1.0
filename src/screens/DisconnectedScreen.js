@@ -3,14 +3,16 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
+import { RESUME_WINDOW_MIN } from '../utils/sessionRecord';
 
 // Shown when RecordingScreen's connectivity guard detects the BLE
 // connection to the M5Stick dropped mid-session (see the useEffect watching
 // state.isConnected there, and the `disconnected: true` path through
 // endSession() in sessionLogic.js). The session that was running has
 // already been ended and persisted with endReason: 'disconnected' by the
-// time this screen is reached, so there's nothing to recover here — this
-// is purely informational, with a single way out.
+// time this screen is reached. THIRTY-SIXTH follow-up: reconnecting from
+// Home within RESUME_WINDOW_MIN offers to continue the session (see
+// HomeScreen.js / sessionLogic.js resumeSession()).
 export default function DisconnectedScreen() {
   const c = useTheme();
   const navigation = useNavigation();
@@ -30,8 +32,8 @@ export default function DisconnectedScreen() {
         </Text>
 
         <Text style={[styles.hint, { color: c.tx3 }]}>
-          Make sure the device is powered on and within range, then reconnect from the Home screen to start a new
-          session.
+          Make sure the device is powered on and within range, then reconnect from the Home screen. If you reconnect
+          within {RESUME_WINDOW_MIN} minutes, you can continue this session.
         </Text>
 
         <Pressable

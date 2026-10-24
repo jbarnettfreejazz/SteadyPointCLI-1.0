@@ -2517,6 +2517,83 @@ on if they'd saved a wizard calibration, otherwise off.
 **Settings > Sonification** (`screens/SonificationSettingsScreen.js`): the
 former Sonification section, moved unchanged.
 
+## Thirty-sixth follow-up — long sessions: in-session calibration, checkpoints, resume
+
+**Edit Calibration Settings during a continuous session.** A button under
+the Sonification switch (continuous sessions only) opens a dialog with the
+same editor as Settings > Calibration (`components/CalibrationEditor.js`,
+now shared by both). Save applies the values to the running session
+immediately (`sessionLogic.applyCalibrationDuringSession()` ->
+`liveSession.applyCalibration()`) and saves them as the app's calibration
+(`calibrationSource: 'manual'`; not a wizard calibration). The calibration
+wizard isn't offered here.
+
+**How a session is recorded now.** The raw ~50 Hz sensor samples are no
+longer kept for sessions (only for the short calibration-wizard recording),
+so memory stays small for multi-hour sessions. Each 0.3 s reading keeps the
+motion behind it in g (in-band and all-frequency), and the calibration in
+effect is kept as segments ("from reading i on, these settings").
+`utils/sessionRecord.js` `buildSessionRecord()` turns that into the saved
+record for every way a session ends:
+- intensity is re-scored on the session's final full scale / noise floor,
+  so a mid-session scale change leaves the whole session consistent;
+  calibration changes and reconnects are saved as `events` and marked on
+  the session's intensity chart ("Calibration", "Band", "Reconnected");
+- the saved trace averages readings into time slices (150 points up to
+  30 min, 5 per minute beyond, max 600) instead of picking single readings,
+  and keeps each slice's peak (`rmsPeakTraceG`, drawn as a faint line);
+- start-vs-end reduction now uses the all-frequency motion of the first and
+  last 10% of readings;
+- records store `startedAt`, `endedAt`, `elapsedSec`; sessions are dated and
+  timed by when they STARTED (a 10 pm–2 am session belongs to the first day);
+- `samples` is now a packet count.
+
+**Checkpoints** (`services/sessionCheckpoint.js`): while a session runs, its
+new readings are saved every minute and whenever the app goes to the
+background, as write-once chunks plus a small meta record. Not in demo mode.
+
+**Recovery at launch** (`sessionLogic.recoverOnLaunch()`, called from App.js
+before the app shows): if the app was closed mid-session, the session is
+rebuilt from its checkpoint and saved automatically (endReason
+`interrupted`, with a note on Session Detail), up to its last checkpoint.
+Also repairs a session whose end-of-session save didn't complete.
+
+**Continue after a disconnect.** The disconnect screen stays. A
+disconnected session is saved as before, and its checkpoint is kept for
+`RESUME_WINDOW_MIN` (10 minutes, `utils/sessionRecord.js`). Reconnecting on
+Home within that time asks "Continue your session?" (timed and continuous).
+Continuing restores what was recorded, applies the current settings (noting
+any calibration change), marks the reconnect, and carries on; the clock
+resumes where it stopped (the disconnected gap isn't counted; a timed
+session keeps its remaining time). When it ends, the existing session record
+is updated rather than a new one added. "Keep it ended", starting a new
+session, or the window passing discards the option.
+
+## Thirty-seventh follow-up — Analytics: session type, duration weighting; long-session chart
+
+**Session type filter.** Under the date range: **All sessions / Timed /
+Continuous**. It applies to the whole Analytics page and is remembered across
+launches (`settings.analyticsSessionType`). Continuous sessions still count
+under the Engaged activity type.
+
+**Weight averages by session length** (switch under the filter, off by
+default, remembered as `settings.analyticsWeighted`). When on, every average
+on the page weights each session by its recorded length (`elapsedSec`, else
+`duration`): the Avg intensity tile, "Your calmest session"'s "below your
+avg", the intensity chart's 3-session line and "Avg down from X to Y"
+subtitle, the activity and sound/guide tiles (whose band bars become the true
+share of recorded time in each band) and the average dominant frequency.
+Per-session dots and bars, and "High time … from X% to Y%", are unchanged.
+
+**Long-session chart.** On Summary and Session Detail, a session that ran an
+hour or more and has a saved start time (sessions from the thirty-sixth
+follow-up on) shows time of day along the bottom: start time on the left,
+end time on the right, whole hours in between (every 2+ hours for very long
+days), with the time span in the chart title. The chart is taller (180 vs
+140). Reconnect events now save how long the device was disconnected
+(`gapSec`), so clock times after a reconnect are placed correctly. Shorter
+sessions and older records keep the "0:00 … N min" axis.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

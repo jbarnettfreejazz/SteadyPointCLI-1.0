@@ -1,13 +1,12 @@
 import { Alert } from 'react-native';
-import { rmsOf, rmsToLevel } from '../utils/dsp';
 import * as live from '../state/liveSession';
 import { sendCommand } from './ble';
 import { persistSave } from './persistence';
 import { silenceAudio, setActiveVoice, setCustomTonalRange, unmuteAudio } from './audio';
 import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
-import { downsampleTrace } from '../utils/sessionStats';
-import { median, bandPercentages } from '../utils/intensityStats';
+import { buildSessionRecord, RESUME_WINDOW_MIN } from '../utils/sessionRecord';
+import * as checkpoint from './sessionCheckpoint';
 
 const ICON_MAP = {
   meditative: { icon: 'brain', iconBg: 'bgInfo', iconColor: 'info' },
@@ -32,6 +31,12 @@ function goBackOrHome(navigation) {
 // snapshots (RecordingScreen's store state, or the timer's start-time
 // snapshot).
 let currentSessionOrigin = { origin: 'setup', customSessionId: null, saveOffer: null };
+
+// THIRTY-SIXTH follow-up: the running session's setup, captured when it
+// starts (or resumes) — what endSession() and the checkpoint need to build
+// its record. resumeOfId: the id of the saved session being continued
+// after a reconnect (null for a new session). persist: false in demo mode.
+let activeSession = null;
 
 // The parts of a session's configuration a custom session stores.
 function setupOf(s) {
@@ -60,12 +65,6 @@ export function findMatchingCustomSession(pinnedSessions, setup) {
         (setup.guideSource !== 'phone' || (p.guideName || '') === (setup.guideName || '')),
     ) || null
   );
-}
-
-function todayKey() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10);
 }
 
 // Resets the setup form to defaults — mirrors resetSetup() in the original.
@@ -332,42 +331,34 @@ export function startSession({ state, actions, navigation, overrides, origin = '
   actions.updateConfig({ customName: '', activityNote: '' });
   actions.setSetupMode('start');
 
-  // Fixed for the whole session, even if the setting changes before the
-  // *next* one — see liveSession.js's setFullScaleG() for why. Same
-  // fixed-for-the-session treatment for the tremor frequency band, which
-  // now gates live intensity/score via bandLimitedRms() (see dsp.js and
-  // liveSession.js's updateLiveMetrics()).
-  live.setFullScaleG(effective.settings?.fullScaleG);
-  // TWENTY-NINTH follow-up: the noise floor setting is now actually applied
-  // (was ignored in favour of dsp.js's built-in default). After
-  // setFullScaleG() — it's validated against it.
-  live.setNoiseFloorG(effective.settings?.noiseFloorG);
-  // Band filtering follows the explicit settings.bandFilterEnabled switch
-  // (THIRTY-FIFTH follow-up; Settings > Calibration). Saving a wizard
-  // calibration turns it on; users can also turn it on/off by hand. Existing
-  // users were migrated from the old rule (on once lastCalibratedAt was set)
-  // in persistence.js — see setTremorBand() in liveSession.js.
-  live.setTremorBand(
-    effective.settings?.tremorBandMinHz,
-    effective.settings?.tremorBandMaxHz,
-    !!effective.settings?.bandFilterEnabled, // THIRTY-FIFTH follow-up: explicit switch (Settings > Calibration)
-  );
-  setActiveVoice(effective.settings?.sonificationVoice);
-  // Only meaningful when the "custom" tonal range voice is selected, but
-  // cheap/harmless to always set — mirrors setFullScaleG()/setTremorBand()'s
-  // "fixed for the whole session" treatment.
-  setCustomTonalRange(effective.settings?.customTonalRangeMinHz, effective.settings?.customTonalRangeMaxHz);
-  // THIRTEENTH follow-up: undo the previous session's endSession()
-  // muting masterGain (see silenceAudio()/unmuteAudio() in audio.js) —
-  // the AudioContext/voice graph persists across sessions, so without
-  // this a session after the first would stay silent at the master bus
-  // regardless of any individual voice's gain.
-  unmuteAudio();
+  applySessionSettings(effective.settings);
 
+  // THIRTY-SIXTH follow-up: a new session replaces any disconnected session
+  // that could still have been continued (it's already saved as it was).
   live.beginSessionBuffers();
+  activeSession = {
+    startedAtMs: Date.now(),
+    config: {
+      activityType: effective.config.activityType,
+      feedbackType: effective.config.feedbackType,
+      duration: effective.config.duration || null,
+      activityNote: '',
+    },
+    guide: {
+      source: effective.guideMediaSource || null,
+      name: effective.guideMediaName || '',
+      path: effective.guideMediaPath || null,
+    },
+    origin,
+    customSessionId,
+    totalSeconds: effective.config.duration ? effective.config.duration * 60 : 0,
+    resumeOfId: null,
+    persist: effective.appMode !== 'demo',
+  };
+  if (activeSession.persist) startCheckpointFor(activeSession, { fresh: true });
   sendCommand('START');
 
-  const totalSeconds = effective.config.duration * 60;
+  const totalSeconds = activeSession.totalSeconds;
   live.startTimers({
     totalSeconds,
     onComplete: (secs) => endSession({ state: effective, actions, navigation, secs, byTimer: true }),
@@ -376,8 +367,50 @@ export function startSession({ state, actions, navigation, overrides, origin = '
   navigation.navigate('recording');
 }
 
-export function pauseRecording() {
-  live.stopRecordingBuffers();
+function startCheckpointFor(session, opts) {
+  const { startedAtMs, config, guide, origin, customSessionId, totalSeconds, resumeOfId, sessionId } = session;
+  return checkpoint.startCheckpointing(
+    { startedAtMs, config, guide, origin, customSessionId, totalSeconds, resumeOfId, sessionId: sessionId ?? resumeOfId ?? null, ...(opts.carry || {}) },
+    { fresh: !!opts.fresh },
+  );
+}
+
+// Puts the calibration and sonification settings into effect for a session.
+function applySessionSettings(settings) {
+  // Fixed for the session unless changed with the Recording screen's "Edit
+  // Calibration Settings" (THIRTY-SIXTH follow-up) — see liveSession.js's
+  // setFullScaleG()/applyCalibration().
+  live.setFullScaleG(settings?.fullScaleG);
+  // TWENTY-NINTH follow-up: the noise floor setting is now actually applied
+  // (was ignored in favour of dsp.js's built-in default). After
+  // setFullScaleG() — it's validated against it.
+  live.setNoiseFloorG(settings?.noiseFloorG);
+  // Band filtering follows the explicit settings.bandFilterEnabled switch
+  // (THIRTY-FIFTH follow-up; Settings > Calibration). Saving a wizard
+  // calibration turns it on; users can also turn it on/off by hand. Existing
+  // users were migrated from the old rule (on once lastCalibratedAt was set)
+  // in persistence.js — see setTremorBand() in liveSession.js.
+  live.setTremorBand(
+    settings?.tremorBandMinHz,
+    settings?.tremorBandMaxHz,
+    !!settings?.bandFilterEnabled, // THIRTY-FIFTH follow-up: explicit switch (Settings > Calibration)
+  );
+  applySoundSettings(settings);
+}
+
+// Sonification settings for a session (also used when continuing one).
+function applySoundSettings(settings) {
+  setActiveVoice(settings?.sonificationVoice);
+  // Only meaningful when the "custom" tonal range voice is selected, but
+  // cheap/harmless to always set — mirrors setFullScaleG()/setTremorBand()'s
+  // "fixed for the whole session" treatment.
+  setCustomTonalRange(settings?.customTonalRangeMinHz, settings?.customTonalRangeMaxHz);
+  // THIRTEENTH follow-up: undo the previous session's endSession()
+  // muting masterGain (see silenceAudio()/unmuteAudio() in audio.js) —
+  // the AudioContext/voice graph persists across sessions, so without
+  // this a session after the first would stay silent at the master bus
+  // regardless of any individual voice's gain.
+  unmuteAudio();
 }
 
 // `disconnected: true` marks a session that was force-ended because the app
@@ -385,16 +418,15 @@ export function pauseRecording() {
 // connectivity guard). The record gets an `endReason`/`statusMessage` pair
 // so Session Detail can explain the gap, and the caller is routed to a
 // dedicated "Disconnected from device" screen instead of the normal Summary.
-// THIRTY-FIRST follow-up: g values rounded to 0.0001 g for storage — far
-// finer than the sensor's noise floor (0.006 g), and keeps saved sessions
-// compact.
-function roundG(values) {
-  return values.map((v) => Math.round(v * 10000) / 10000);
-}
-
+//
+// THIRTY-SIXTH follow-up: the record is built by utils/sessionRecord.js from
+// the readings' motion values (no raw sensor samples). A disconnected
+// session can be continued if the device reconnects within
+// RESUME_WINDOW_MIN (see resumeSession()); a continued session's end
+// updates its existing record instead of adding a new one.
 export function endSession({ state, actions, navigation, secs, byTimer = false, disconnected = false }) {
   live.stopTimers();
-  const { buffer: sessionBuffer, levelTrace, rmsTraceG = [], rmsAllTraceG = [] } = live.stopRecordingBuffers();
+  const recording = live.stopRecordingBuffers();
   // No point sending STOP to a device that's already gone — sendCommand()
   // would just warn and no-op, but skipping it makes the intent explicit.
   if (!disconnected) sendCommand('STOP');
@@ -407,145 +439,54 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   live.setAudioHook(null);
   stopGuideTrack();
 
-  // Intensity shift (start vs end of session) — unrelated to the
-  // session's median intensity, kept as-is. Uses the same fullScaleG that
-  // was actually in effect for this session (set at startSession time),
-  // not the default, so these numbers are consistent with the live
-  // display and the levelTrace used for intensity below.
-  const sessionFullScaleG = live.getFullScaleG();
-  const sessionNoiseFloorG = live.getNoiseFloorG();
-  // The tremor band actually in effect for this session (see startSession()
-  // above) — persisted alongside fullScaleG for the same reason: so a
-  // session's record stays self-describing even if the user's calibrated
-  // band changes before their next session.
-  const {
-    tremorBandMinHz: sessionTremorBandMinHz,
-    tremorBandMaxHz: sessionTremorBandMaxHz,
-    tremorBandActive: sessionTremorBandActive,
-  } = live.getTremorBand();
-  let startLevel = 0,
-    endLevel = 0,
-    reductionPct = 0;
-  if (sessionBuffer.length >= 20) {
-    const tenPct = Math.max(5, Math.floor(sessionBuffer.length * 0.1));
-    const sd = sessionBuffer.slice(0, tenPct);
-    const ed = sessionBuffer.slice(-tenPct);
-    const srms = rmsOf(sd.map((d) => d.x), sd.map((d) => d.y), sd.map((d) => d.z));
-    const erms = rmsOf(ed.map((d) => d.x), ed.map((d) => d.y), ed.map((d) => d.z));
-    startLevel = rmsToLevel(srms, sessionFullScaleG, sessionNoiseFloorG);
-    endLevel = rmsToLevel(erms, sessionFullScaleG, sessionNoiseFloorG);
-    reductionPct = startLevel > 0 ? Math.max(0, Math.round(((startLevel - endLevel) / startLevel) * 100)) : 0;
-  }
+  const session = activeSession || {
+    startedAtMs: Date.now() - (secs || 0) * 1000,
+    config: { ...state.config, duration: state.config.duration || null },
+    guide: { source: state.guideMediaSource || null, name: state.guideMediaName || '', path: state.guideMediaPath || null },
+    origin: currentSessionOrigin.origin,
+    customSessionId: currentSessionOrigin.customSessionId,
+    resumeOfId: null,
+    persist: state.appMode !== 'demo',
+  };
+  const endedAtMs = Date.now();
+  const { record, results: built } = buildSessionRecord({
+    rmsG: recording.rmsTraceG,
+    rmsAllG: recording.rmsAllTraceG,
+    segments: recording.segments,
+    events: recording.events,
+    elapsedSec: secs,
+    startedAtMs: session.startedAtMs,
+    endedAtMs,
+    config: session.config,
+    guide: session.guide,
+    origin: session.origin,
+    customSessionId: session.customSessionId,
+    saveOffer: session.resumeOfId ? null : currentSessionOrigin.saveOffer,
+    peakFreq: recording.liveFreqHz,
+    packetCount: recording.packetCount,
+    endReason: disconnected ? 'disconnected' : 'completed',
+  });
 
-  // Validity gate (unchanged from the old SteadyPoint Score): a session is
-  // only measured if it has at least 10 tremor-level samples AND lasted at
-  // least 30 seconds. Otherwise it shows "—" (see utils/intensityStats.js).
-  //
-  // TWENTY-EIGHTH follow-up: the SteadyPoint Score (steadiness/consistency
-  // blend) and its separate pctNone..pctHigh fields are gone. Sessions are
-  // described by their median intensity and time in each band, computed
-  // from the full-resolution trace. Older saved records keep their score
-  // fields; sessionIntensity() still reads them for backwards compatibility.
-  const intensityValid = levelTrace.length >= 10 && secs >= 30;
-  const medianIntensity = intensityValid ? Math.round(median(levelTrace)) : null;
-  const bandPct = intensityValid ? bandPercentages(levelTrace) : null;
-
-  const liveState = live.getLiveState();
   // Mirrors the id the ADD_SESSION reducer case will assign — computed here
   // so the Summary screen can later attach a note to this exact record via
   // updateSession(sessionId, ...) without needing a fresh read of the store.
-  const sessionId = state.todaySessionNextId;
-  const results = {
-    sessionId,
-    reduction: reductionPct,
-    fullScaleG: sessionFullScaleG,
-    noiseFloorG: sessionNoiseFloorG,
-    startLevel,
-    endLevel,
-    duration: Math.max(1, Math.round(secs / 60)),
-    // TWENTY-EIGHTH follow-up: null when no dominant frequency was detected
-    // (was a 5.7 Hz placeholder, which then showed up as real data).
-    peakFreq: liveState.liveFreqHz > 0 ? liveState.liveFreqHz : null,
-    samples: sessionBuffer.length,
-    intensityTrace: downsampleTrace(levelTrace),
-    // THIRTY-FIRST follow-up: the motion (g) behind each intensityTrace point,
-    // sampled at the same positions (same length input, same downsampling), so
-    // entry i of all three traces is the same moment. rmsTraceG is what the
-    // 0-100 reading was scored from (in-band when band filtering was on);
-    // rmsAllTraceG is all-frequencies and depends on no calibration setting.
-    // Saved for future comparisons — nothing displays them yet.
-    rmsTraceG: roundG(downsampleTrace(rmsTraceG)),
-    rmsAllTraceG: roundG(downsampleTrace(rmsAllTraceG)),
-    intensityValid,
-    medianIntensity,
-    bandPct,
-    // TWENTY-FOURTH follow-up — see currentSessionOrigin. saveOffer is the
-    // setup Summary offers to save (null = don't offer).
-    origin: currentSessionOrigin.origin,
-    customSessionId: currentSessionOrigin.customSessionId,
-    saveOffer: currentSessionOrigin.saveOffer,
-  };
+  // A continued session keeps its existing id.
+  const sessionId = session.resumeOfId ?? state.todaySessionNextId;
+  actions.setResults({ ...built, sessionId });
+  if (session.resumeOfId != null) actions.updateSession(sessionId, record);
+  else actions.addSession(record);
 
-  actions.setResults(results);
+  if (session.persist) {
+    checkpoint.finishCheckpointing(disconnected ? 'disconnected' : 'finished', {
+      sessionId,
+      ...(disconnected ? { disconnectedAtMs: endedAtMs } : {}),
+    });
+  }
+  activeSession = null;
 
-  const now = new Date();
-  const hh = now.getHours(),
-    mm = now.getMinutes();
-  const ampm = hh >= 12 ? 'PM' : 'AM';
-  const h12 = hh % 12 || 12;
-  const timeStr = `${h12}:${mm.toString().padStart(2, '0')} ${ampm}`;
-  const sessionLabel =
-    (state.config.activityNote || '').trim() ||
-    { meditative: 'Meditation session', engaged: 'Engaged session', active: 'Active session' }[
-      state.config.activityType
-    ] ||
-    'Session';
-
-  actions.addSession({
-    dateKey: todayKey(),
-    date: 'Today',
-    time: timeStr,
-    label: sessionLabel,
-    reduction: results.reduction,
-    fullScaleG: results.fullScaleG,
-    noiseFloorG: results.noiseFloorG, // TWENTY-NINTH follow-up — the floor actually used
-    tremorBandMinHz: sessionTremorBandMinHz,
-    tremorBandMaxHz: sessionTremorBandMaxHz,
-    tremorBandFiltered: sessionTremorBandActive, // whether the band above was actually applied to this session's scoring, or just carried along informationally
-    duration: results.duration,
-    isContinuous: !state.config.duration, // true if this session had no fixed duration — see Continuous Session
-    freq: results.peakFreq,
-    samples: results.samples,
-    intensityTrace: results.intensityTrace,
-    rmsTraceG: results.rmsTraceG, // THIRTY-FIRST follow-up
-    rmsAllTraceG: results.rmsAllTraceG,
-    intensityValid: results.intensityValid, // TWENTY-SIXTH follow-up
-    medianIntensity: results.medianIntensity,
-    bandPct: results.bandPct,
-    startLevel: results.startLevel,
-    endLevel: results.endLevel,
-    activityType: state.config.activityType,
-    feedbackType: state.config.feedbackType,
-    guideSource: state.guideMediaSource || null,
-    // Storing the actual file reference directly (not just the type) means
-    // "Start similar session" no longer depends on finding a matching
-    // pinned session to reconnect the guide audio — that lookup silently
-    // failed whenever no matching pinned entry existed (which became the
-    // normal case once My Sessions / the Setup note field were hidden,
-    // since those were the only ways new pinned entries got created).
-    guidePath: state.guideMediaSource === 'phone' ? state.guideMediaPath : null,
-    guideName: state.guideMediaSource === 'phone' ? state.guideMediaName : '',
-    origin: currentSessionOrigin.origin, // TWENTY-FOURTH follow-up: 'setup' | 'quickStart' | 'custom' | 'similar'
-    customSessionId: currentSessionOrigin.customSessionId,
-    endReason: disconnected ? 'disconnected' : 'completed',
-    statusMessage: disconnected
-      ? 'Session ended early — the app lost connection to your M5Stick device.'
-      : null,
-  });
-
-  // persistSave needs the *next* state (post addSession),
-  // so callers should trigger a save shortly after dispatch settles — see
-  // RecordingScreen's useEffect on state.allSessions for the actual save call.
+  // persistSave needs the *next* state (post addSession/updateSession), so
+  // RecordingScreen's useEffect on state.allSessions does the actual save
+  // (then clears a finished session's checkpoint).
 
   actions.setScoreAnim(false);
   if (disconnected) {
@@ -556,4 +497,171 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
     navigation.navigate('summary');
     setTimeout(() => actions.setScoreAnim(true), 450);
   }
+}
+
+// ── THIRTY-SIXTH follow-up: calibration changes during a session ──
+// Applies Settings-style calibration values to the running session right
+// away (the caller also saves them as the app's settings). Returns whether
+// anything changed.
+export function applyCalibrationDuringSession(patch) {
+  const changed = live.applyCalibration(patch);
+  if (changed && activeSession?.persist) checkpoint.flushCheckpoint();
+  return changed;
+}
+
+// The Recording screen's sonification switch: keep the record's sound
+// setting in step (and in the checkpoint).
+export function noteFeedbackType(feedbackType) {
+  if (!activeSession || activeSession.config.feedbackType === feedbackType) return;
+  activeSession = { ...activeSession, config: { ...activeSession.config, feedbackType } };
+  if (activeSession.persist) checkpoint.updateCheckpointMeta({ config: activeSession.config });
+}
+
+export function isSessionActive() {
+  return !!activeSession;
+}
+
+// ── THIRTY-SIXTH follow-up: continuing a session after a disconnect ──
+
+function withinResumeWindow(meta, now = Date.now()) {
+  return (
+    meta?.status === 'disconnected' &&
+    typeof meta.disconnectedAtMs === 'number' &&
+    now - meta.disconnectedAtMs <= RESUME_WINDOW_MIN * 60 * 1000
+  );
+}
+
+// The session that can be continued, or null. Clears an expired one.
+// Returns { meta, minutesAgo, isContinuous }.
+export async function getResumableSession() {
+  if (activeSession) return null;
+  const cp = await checkpoint.loadCheckpoint();
+  if (!cp) return null;
+  if (cp.meta.status === 'disconnected' && !withinResumeWindow(cp.meta)) {
+    await checkpoint.clearCheckpoint();
+    return null;
+  }
+  if (!withinResumeWindow(cp.meta)) return null;
+  return {
+    meta: cp.meta,
+    minutesAgo: Math.max(0, Math.round((Date.now() - cp.meta.disconnectedAtMs) / 60000)),
+    isContinuous: !cp.meta.config?.duration,
+  };
+}
+
+// The user chose not to continue: the session stays saved as it ended.
+export function declineResume() {
+  return checkpoint.clearCheckpoint();
+}
+
+// Continues the disconnected session: restores what was recorded, applies
+// the current settings (noting any calibration change), marks the
+// reconnect on the session's chart and carries on recording. The clock
+// continues from where it stopped (the disconnected gap isn't counted).
+export async function resumeSession({ state, actions, navigation }) {
+  if (!state.isConnected) {
+    Alert.alert('Not connected', 'Please connect your M5Stick device first.');
+    return false;
+  }
+  const cp = await checkpoint.loadCheckpoint();
+  if (!cp || !withinResumeWindow(cp.meta)) {
+    Alert.alert('Session can’t be continued', `Sessions can be continued for ${RESUME_WINDOW_MIN} minutes after a disconnect.`);
+    return false;
+  }
+  const m = cp.meta;
+  const n = Math.min(cp.rmsTraceG.length, cp.rmsAllTraceG.length);
+
+  live.restoreRecording({
+    rmsTraceG: cp.rmsTraceG.slice(0, n),
+    rmsAllTraceG: cp.rmsAllTraceG.slice(0, n),
+    segments: m.segments || [],
+    events: m.events || [],
+    packetCount: m.packetCount || 0,
+    elapsed: m.elapsed || 0,
+    liveFreqHz: m.liveFreqHz || 0,
+  });
+  // Settings may have changed while disconnected: apply the current ones
+  // (a calibration change is noted on the session's chart).
+  live.applyCalibration({ ...state.settings, bandFilterEnabled: !!state.settings?.bandFilterEnabled });
+  applySoundSettings(state.settings);
+  live.addSessionEvent('reconnect', { gapSec: Math.max(0, Math.round((Date.now() - m.disconnectedAtMs) / 1000)) });
+
+  activeSession = {
+    startedAtMs: m.startedAtMs,
+    config: m.config,
+    guide: m.guide || { source: null, name: '', path: null },
+    origin: m.origin,
+    customSessionId: m.customSessionId ?? null,
+    totalSeconds: m.totalSeconds || 0,
+    resumeOfId: m.sessionId,
+    persist: true,
+  };
+  currentSessionOrigin = { origin: m.origin, customSessionId: m.customSessionId ?? null, saveOffer: null };
+  actions.setSetupMode('start');
+  actions.setEditingPinnedId(null);
+  actions.updateConfig({ ...m.config, duration: m.config?.duration || null, customName: '', activityNote: '' });
+  actions.setGuideMedia(activeSession.guide.source, activeSession.guide.name, activeSession.guide.path);
+  startCheckpointFor(activeSession, { carry: { chunkCount: m.chunkCount || 0, savedReadings: n } });
+
+  sendCommand('START');
+  const effective = { ...state, config: { ...state.config, ...m.config } };
+  live.startTimers({
+    totalSeconds: activeSession.totalSeconds,
+    onComplete: (secs) => endSession({ state: effective, actions, navigation, secs, byTimer: true }),
+  });
+  navigation.navigate('recording');
+  return true;
+}
+
+// ── THIRTY-SIXTH follow-up: recovery at launch ──
+// Called by App.js with the just-loaded saved state, before the app shows.
+// If a checkpoint shows a session whose record isn't fully saved — the app
+// was closed mid-session, or before the end-of-session save finished — the
+// record is rebuilt from the checkpoint and added (or updated). Returns the
+// sessions/next id to use and whether anything changed.
+export async function recoverOnLaunch({ allSessions = [], todaySessionNextId = 100 }) {
+  const cp = await checkpoint.loadCheckpoint();
+  if (!cp) return { allSessions, todaySessionNextId, changed: false };
+  const m = cp.meta;
+  const n = Math.min(cp.rmsTraceG.length, cp.rmsAllTraceG.length);
+  const existing = m.sessionId != null ? allSessions.find((s) => s.id === m.sessionId) : null;
+  const needsRecord =
+    m.status === 'recording' || !existing || (existing.elapsedSec ?? 0) < (m.elapsed ?? 0) - 1;
+
+  let sessions = allSessions;
+  let nextId = todaySessionNextId;
+  let changed = false;
+  if (needsRecord && n > 0) {
+    const endReason = m.status === 'disconnected' ? 'disconnected' : m.status === 'finished' ? 'completed' : 'interrupted';
+    const { record } = buildSessionRecord({
+      rmsG: cp.rmsTraceG.slice(0, n),
+      rmsAllG: cp.rmsAllTraceG.slice(0, n),
+      segments: m.segments,
+      events: m.events,
+      elapsedSec: m.elapsed || 0,
+      startedAtMs: m.startedAtMs,
+      endedAtMs: m.lastSavedAtMs || Date.now(),
+      config: m.config,
+      guide: m.guide,
+      origin: m.origin,
+      customSessionId: m.customSessionId,
+      peakFreq: m.liveFreqHz,
+      packetCount: m.packetCount,
+      endReason,
+    });
+    const id = existing ? existing.id : m.sessionId ?? m.resumeOfId ?? nextId;
+    if (allSessions.some((s) => s.id === id)) {
+      sessions = allSessions.map((s) => (s.id === id ? { ...s, ...record, id } : s));
+    } else {
+      sessions = [{ ...record, id }, ...allSessions];
+      nextId = Math.max(nextId, id + 1);
+    }
+    changed = true;
+  }
+
+  // Keep a disconnected session that can still be continued; otherwise the
+  // checkpoint has done its job. An interrupted session can't be continued
+  // (its device connection is gone along with the app).
+  if (!withinResumeWindow(m)) await checkpoint.clearCheckpoint();
+  return { allSessions: sessions, todaySessionNextId: nextId, changed };
 }

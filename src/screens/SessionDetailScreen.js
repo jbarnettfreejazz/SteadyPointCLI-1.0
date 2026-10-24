@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { MedianIntensityRing, TimeInBands } from '../components/IntensityDisplay';
-import { sessionIntensity, sessionTrace, sessionReduction, displayScale, sessionScale } from '../utils/intensityStats';
+import { sessionIntensity, sessionTrace, sessionReduction, displayScale, sessionPeakTrace, sessionScale } from '../utils/intensityStats';
 import IntensityChart from '../components/IntensityChart';
 import { sessionInsight } from '../utils/sessionStats';
 import { startSimilarSession } from '../services/sessionLogic';
@@ -57,7 +57,8 @@ export default function SessionDetailScreen() {
           ))}
         </View>
 
-        {s.endReason === 'disconnected' && (
+        {/* THIRTY-SIXTH follow-up: also for a session recovered after the app closed */}
+        {(s.endReason === 'disconnected' || s.endReason === 'interrupted') && (
           <View style={[styles.statusBox, { backgroundColor: c.bgDanger, borderColor: c.danger }]}>
             <Text style={{ fontSize: 12, color: c.danger, fontWeight: '600' }}>
               ⚠️ {s.statusMessage || 'Session ended early — lost connection to the device.'}
@@ -85,7 +86,14 @@ export default function SessionDetailScreen() {
         </View>
 
         <View style={styles.chartWrap}>
-          <IntensityChart trace={sessionTrace(s, scale)} durationSec={s.duration * 60} colors={c} />
+          <IntensityChart
+            trace={sessionTrace(s, scale)}
+            peaks={sessionPeakTrace(s, scale)}
+            events={s.events}
+            startedAt={s.startedAt}
+            durationSec={s.elapsedSec ?? s.duration * 60}
+            colors={c}
+          />
         </View>
 
         {s.samples > 0 && (

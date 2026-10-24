@@ -6,7 +6,8 @@ import { View, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StoreProvider, useStore } from './src/state/StoreContext';
 import RootNavigator from './src/navigation/RootNavigator';
-import { persistLoad, persistSettings } from './src/services/persistence';
+import { persistLoad, persistSave, persistSettings } from './src/services/persistence';
+import { recoverOnLaunch } from './src/services/sessionLogic';
 import { useTheme } from './src/utils/theme';
 
 function AppInner() {
@@ -17,7 +18,23 @@ function AppInner() {
 
   useEffect(() => {
     (async () => {
-      const restored = await persistLoad();
+      let restored = await persistLoad();
+      if (restored && !restored.settings) delete restored.settings; // never replace settings with null
+      // THIRTY-SIXTH follow-up: a session that was in progress when the app
+      // closed (or whose end-of-session save didn't finish) is rebuilt from
+      // its checkpoint and saved, before anything is shown.
+      try {
+        const rec = await recoverOnLaunch({
+          allSessions: restored?.allSessions || [],
+          todaySessionNextId: restored?.todaySessionNextId ?? state.todaySessionNextId,
+        });
+        if (rec.changed) {
+          restored = { ...(restored || {}), allSessions: rec.allSessions, todaySessionNextId: rec.todaySessionNextId };
+          await persistSave({ ...state, ...restored, settings: restored.settings || state.settings });
+        }
+      } catch (e) {
+        console.warn('session recovery failed', e?.message || e);
+      }
       if (restored) {
         actions.restoreState(restored);
       }
