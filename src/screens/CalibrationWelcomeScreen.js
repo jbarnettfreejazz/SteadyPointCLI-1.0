@@ -5,11 +5,14 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useBLE } from '../services/useBLE';
+import { defaultCalibrationPatch } from '../utils/calibrationWizard';
 
 // Calibration Mode Screen 0 (Calibration_Mode_Design.pdf, Section 2) —
 // shown only on first launch, before any measurement features are
-// reachable. There is deliberately no "skip" option: the only action is
-// "Calibrate Now", leading into CalibrationScreen.js. The wording is
+// reachable. "Calibrate Now" leads into CalibrationScreen.js.
+// FORTIETH follow-up: "Use default values" skips calibration (no device
+// needed) and goes to Home with the default calibration — see
+// utils/calibrationWizard.js defaultCalibrationPatch(). The wording is
 // careful not to frame this as one-time setup — the app can recalibrate
 // again later from Settings if tremors change.
 //
@@ -22,8 +25,13 @@ import { useBLE } from '../services/useBLE';
 export default function CalibrationWelcomeScreen() {
   const c = useTheme();
   const navigation = useNavigation();
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const { connect, disconnect } = useBLE();
+
+  const applyDefaults = () => {
+    actions.updateSettings(defaultCalibrationPatch()); // saved by App.js's settings effect
+    navigation.reset({ index: 0, routes: [{ name: 'mainTabs' }] });
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
@@ -73,7 +81,7 @@ export default function CalibrationWelcomeScreen() {
         </View>
 
         <Text style={[styles.note, { color: c.info }]}>
-          This takes less than a minute. You won't be able to start a measurement session until it's complete.
+          This takes less than a minute. You can also start with default values and calibrate later from Settings.
         </Text>
       </View>
 
@@ -85,8 +93,14 @@ export default function CalibrationWelcomeScreen() {
           <Text style={[styles.buttonText, { color: state.isConnected ? '#fff' : c.tx3 }]}>Calibrate Now</Text>
         </Pressable>
         <Text style={[styles.footerNote, { color: c.tx3 }]}>
-          {state.isConnected ? 'Required before your first measurement' : 'Connect your device to continue'}
+          {state.isConnected ? 'Recommended before your first measurement' : 'Connect your device to calibrate'}
         </Text>
+        <Pressable
+          onPress={applyDefaults}
+          style={[styles.secondaryButton, { borderColor: c.bd2 }]}
+          accessibilityRole="button">
+          <Text style={{ color: c.tx1, fontWeight: '600' }}>Use default values</Text>
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -111,4 +125,5 @@ const styles = StyleSheet.create({
   button: { borderRadius: radii.lg, paddingVertical: 16, alignItems: 'center' },
   buttonText: { fontSize: 16, fontWeight: '600' },
   footerNote: { fontSize: 11, textAlign: 'center', marginTop: 10 },
+  secondaryButton: { borderRadius: radii.lg, borderWidth: 1, paddingVertical: 14, alignItems: 'center', marginTop: 14 },
 });

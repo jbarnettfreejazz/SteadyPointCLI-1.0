@@ -170,77 +170,67 @@ function combinedDominantFreqAboveMinHz(xs, ys, zs, sr, minHz, minSamples = 16) 
 //   2. Sustained-frequency-band detector (batch, run once) -> tremor band
 // ══════════════════════════════════════════════════════
 
-// Stateful tracker for Calibration Mode's "hold your biggest tremor"
-// step. Fed a new RMS reading on every tick; tracks the highest RMS seen
-// so far (the running peak) and how long (continuously) the signal has
-// stayed within toleranceRatio of that peak. Per the design doc: "When
-// the RMS holds within a small tolerance of its running peak for at
-// least 5 continuous seconds, the app treats that plateau as the user's
-// true level 100." toleranceRatio isn't specified exactly in the design
-// doc's text. Initially set to 0.85 (matching the plateau width shown in
-// the doc's own reference chart), but real device testing found this
-// was too strict — genuine vigorous shaking naturally oscillates and
-// repeatedly dropped below 85% of peak, hard-resetting progress before
-// it could ever accumulate 5 seconds. Loosened to 0.6 and switched from
-// a hard reset to a decay (at decayMultiplier x the accumulation rate)
-// on a dip — verified via synthetic testing to reliably reach 5 seconds
-// during realistic oscillating vigorous motion, while still correctly
-// returning to 0 within a few seconds of a genuine stop.
-export function createSustainedPeakTracker({ toleranceRatio = 0.6, sustainSeconds = 5, decayMultiplier = 2 } = {}) {
-  let runningPeak = 0;
-  let sustainedMs = 0;
-  let lastTickMs = null;
-  // Recent (rms, timestamp) readings within the last sustainSeconds —
-  // used to compute what was actually sustained (see sustainedValue
-  // below), rather than reporting the all-time peak, which could be an
-  // unrepresentative one-off spike (a bump, a sudden jerk) rather than
-  // genuinely sustained effort. Per the design doc: "The RMS value
-  // sustained during that 5-second window becomes the candidate value
-  // for FULL_SCALE_G" — not "the highest value ever seen."
-  let recentReadings = [];
+// THIRTY-NINTH follow-up: Calibration Mode's level-100 detector, ported
+// from the Flutter app's SustainedPeakDetector (sp_core metrics/
+// calibration.dart) so both apps calibrate the same way. Replaces the old
+// createSustainedPeakTracker(), which waited for a 5-second plateau at 60%
+// of the running peak and took the level at the moment the button was
+// tapped — it could lock in a warm-up level, and fell back to the single
+// highest reading if the user relaxed before tapping.
+//
+// Fed the same ~2-second AC-RMS readings sessions use (rmsOf() over the
+// live ROLL_WIN window), so level 100 is on exactly the session scale.
+// Keeps, across the WHOLE recording (so when the user taps doesn't matter):
+//   - bestSustainedG: the highest average over any full minSustainMs (1 s)
+//   - bestBriefG:     the highest average over any briefMs (300 ms)
+// The peak counts as HELD when bestSustainedG >= toleranceRatio (0.8) x
+// bestBriefG — Flutter's simulation-chosen value: steady tremor fluctuating
+// ±40% passes, a burst of 0.8 s or less doesn't. fullScaleG is the
+// sustained value when held, otherwise the brief value (a real maximum,
+// even though brief, rather than a diluted average).
+export function createSustainedPeakDetector({ minSustainMs = 1000, briefMs = 300, toleranceRatio = 0.8 } = {}) {
+  let recent = [];
+  let firstAt = null;
+  let hasData = false;
+  let runningPeakG = 0;
+  let bestSustainedG = null;
+  let bestBriefG = null;
+  const meanOf = (rs) => (rs.length ? rs.reduce((t, r) => t + r.g, 0) / rs.length : 0);
 
-  return {
-    update(rms, nowMs) {
-      runningPeak = Math.max(runningPeak, rms);
-      const withinTolerance = runningPeak > 0 && rms >= runningPeak * toleranceRatio;
-      const dt = lastTickMs != null ? Math.max(0, nowMs - lastTickMs) : 0;
-      lastTickMs = nowMs;
-      // Decays rather than hard-resets on a dip — confirmed via direct
-      // testing that real vigorous shaking naturally oscillates enough to
-      // repeatedly drop below tolerance, and a hard reset never let the
-      // counter accumulate the full 5 seconds. Still correctly returns to
-      // 0 within a few seconds of a genuine stop, since decay runs faster
-      // than accumulation.
-      sustainedMs = withinTolerance ? sustainedMs + dt : Math.max(0, sustainedMs - dt * decayMultiplier);
-      const targetMs = sustainSeconds * 1000;
-
-      recentReadings.push({ rms, atMs: nowMs });
-      const cutoff = nowMs - targetMs;
-      recentReadings = recentReadings.filter((r) => r.atMs >= cutoff);
-      // Average of the recent readings that actually qualified as "at
-      // the peak" (within tolerance) — excludes any dips that happened
-      // to fall within this recent window, and excludes an old spike
-      // once it's aged out of the recent-readings window even though
-      // runningPeak itself never decreases.
-      const qualifying = recentReadings.filter((r) => r.rms >= runningPeak * toleranceRatio);
-      const sustainedValue = qualifying.length > 0 ? qualifying.reduce((s, r) => s + r.rms, 0) / qualifying.length : runningPeak;
-
-      return {
-        runningPeak,
-        currentRms: rms,
-        sustainedValue,
-        sustainedMs: Math.min(sustainedMs, targetMs),
-        sustainedSeconds: Math.min(sustainedMs, targetMs) / 1000,
-        reached: sustainedMs >= targetMs,
-      };
+  const api = {
+    addSample(nowMs, acRmsG) {
+      if (acRmsG == null || !Number.isFinite(acRmsG)) return api.state();
+      hasData = true;
+      if (firstAt == null) firstAt = nowMs;
+      if (acRmsG > runningPeakG) runningPeakG = acRmsG;
+      recent.push({ g: acRmsG, at: nowMs });
+      recent = recent.filter((r) => r.at >= nowMs - minSustainMs);
+      const elapsed = nowMs - firstAt;
+      if (elapsed >= briefMs) {
+        const m = meanOf(recent.filter((r) => r.at >= nowMs - briefMs));
+        if (bestBriefG == null || m > bestBriefG) bestBriefG = m;
+      }
+      if (elapsed >= minSustainMs) {
+        const m = meanOf(recent);
+        if (bestSustainedG == null || m > bestSustainedG) bestSustainedG = m;
+      }
+      return api.state();
+    },
+    state() {
+      const peakWasSustained = bestSustainedG != null && bestBriefG != null && bestSustainedG >= bestBriefG * toleranceRatio;
+      const fullScaleG = !hasData ? null : peakWasSustained ? bestSustainedG : bestBriefG ?? runningPeakG;
+      return { hasData, runningPeakG, bestSustainedG, bestBriefG, peakWasSustained, fullScaleG };
     },
     reset() {
-      runningPeak = 0;
-      sustainedMs = 0;
-      lastTickMs = null;
-      recentReadings = [];
+      recent = [];
+      firstAt = null;
+      hasData = false;
+      runningPeakG = 0;
+      bestSustainedG = null;
+      bestBriefG = null;
     },
   };
+  return api;
 }
 
 // Batch analysis over a full calibration recording (chronological

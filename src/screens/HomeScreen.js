@@ -31,13 +31,17 @@ import { HOME_CUSTOM_SESSION_LIMIT, sortByRecentUse } from '../utils/customSessi
 const FEATURE_CUSTOM_SESSIONS = true;
 
 // Same three quick-start templates as the original HTML's TEMPLATES const.
-// Note: "Taking a Walk" used a Spotify guide in the original, but Spotify
-// integration isn't built yet, so this defaults to no guide for now.
+// Note: the Active template ("Taking a Walk") used a Spotify guide in the
+// original, but Spotify integration isn't built yet, so this defaults to no
+// guide for now.
+// THIRTY-EIGHTH follow-up: headers are the session type (Meditative /
+// Engaged / Active) instead of an example activity (Meditating / Reading /
+// Taking a Walk), and the type is no longer repeated in the details line.
 
 const TEMPLATES = [
-  { name: 'Meditating', activityType: 'meditative', feedbackType: 'visual', guideSource: null, duration: 5, iconBg: 'bgInfo', iconColor: 'info', Icon: BrainIcon },
-  { name: 'Reading', activityType: 'engaged', feedbackType: 'both', guideSource: null, duration: 10, iconBg: 'bgSuccess', iconColor: 'success', Icon: BookIcon },
-  { name: 'Taking a Walk', activityType: 'active', feedbackType: 'visual', guideSource: null, duration: 20, iconBg: 'bgWarning', iconColor: 'warning', Icon: WalkIcon },
+  { name: 'Meditative', activityType: 'meditative', feedbackType: 'visual', guideSource: null, duration: 5, iconBg: 'bgInfo', iconColor: 'info', Icon: BrainIcon },
+  { name: 'Engaged', activityType: 'engaged', feedbackType: 'both', guideSource: null, duration: 10, iconBg: 'bgSuccess', iconColor: 'success', Icon: BookIcon },
+  { name: 'Active', activityType: 'active', feedbackType: 'visual', guideSource: null, duration: 20, iconBg: 'bgWarning', iconColor: 'warning', Icon: WalkIcon },
 ];
 
 // Continuous Session — runs with no fixed duration until manually ended.
@@ -382,7 +386,6 @@ export default function HomeScreen() {
           {TEMPLATES.map((tpl) => {
             const guide = tpl.guideSource ? tpl.guideSource.charAt(0).toUpperCase() + tpl.guideSource.slice(1) : 'No guide';
             const sound = tpl.feedbackType === 'both' ? 'Sound on' : 'No sound';
-            const act = tpl.activityType.charAt(0).toUpperCase() + tpl.activityType.slice(1);
             return (
               <Pressable
                 key={tpl.name}
@@ -394,7 +397,7 @@ export default function HomeScreen() {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ fontSize: 14, fontWeight: '500', color: c.tx1, marginBottom: 2 }}>{tpl.name}</Text>
                   <Text style={{ fontSize: 11, color: c.tx3 }}>
-                    {act} · {tpl.duration} min · {sound} · {guide}
+                    {tpl.duration} min · {sound} · {guide}
                   </Text>
                 </View>
                 <Text style={{ fontSize: 12, fontWeight: '500', color: c.info }}>Start →</Text>

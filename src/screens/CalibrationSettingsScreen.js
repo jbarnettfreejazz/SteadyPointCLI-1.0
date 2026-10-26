@@ -24,7 +24,12 @@ function lastSetNote(settings) {
   const source = settings.calibrationSource || (settings.lastCalibratedAt ? 'wizard' : null);
   const when = dateFromIso(settings.calibrationSetAt || (source === 'wizard' ? settings.lastCalibratedAt : null));
   if (source === 'manual') return `Last set manually${when ? ` on ${when}` : ''}.`;
-  if (source === 'wizard') return `Last set by the calibration wizard${when ? ` on ${when}` : ''}.`;
+  if (source === 'default') return `Using the default values${when ? ` (chosen on ${when})` : ''}.`; // FORTIETH follow-up
+  if (source === 'wizard') {
+    // THIRTY-NINTH follow-up: note when level 100 came from a brief peak.
+    const brief = settings.calibrationPeakHeld === false ? ', from a brief peak' : '';
+    return `Last set by the calibration wizard${when ? ` on ${when}` : ''}${brief}.`;
+  }
   return 'Using the default values.';
 }
 

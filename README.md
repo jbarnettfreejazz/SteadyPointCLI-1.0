@@ -2594,6 +2594,73 @@ days), with the time span in the chart title. The chart is taller (180 vs
 (`gapSec`), so clock times after a reconnect are placed correctly. Shorter
 sessions and older records keep the "0:00 … N min" axis.
 
+## Thirty-eighth follow-up — Quick Start headers show the session type
+
+The three timed Quick Start rows on Home are now headed by their session type
+— **Meditative**, **Engaged**, **Active** (were "Meditating", "Reading",
+"Taking a Walk") — and the details line underneath no longer repeats the
+type (e.g. "5 min · No sound · No guide"). Continuous Session is unchanged.
+
+## Thirty-ninth follow-up — calibration wizard aligned with the Flutter app
+
+Based on the analyst's comparison and the Flutter `calibration.dart` /
+`intensity.dart` code.
+
+**How level 100 (FULL_SCALE_G) is measured.**
+- Readings are now the same ~2-second AC-RMS readings sessions use (`rmsOf`
+  over the live 100-sample window = Flutter's `sqrt(std_x²+std_y²+std_z²)`
+  over a 1000/0.5 Hz = 2 s window), sampled every 100 ms. Before, the wizard
+  used 0.3-second readings, a different scale from sessions.
+- `dsp.js` `createSustainedPeakDetector()` is a port of Flutter's
+  `SustainedPeakDetector`: best 1-second average and best 300 ms average,
+  each kept across the whole recording (so when the user taps doesn't
+  matter, and a warm-up level isn't locked in). The peak is "held" when the
+  best 1-second average is at least 80% of the best brief one; level 100 is
+  the 1-second value when held, otherwise the brief value. It replaces
+  `createSustainedPeakTracker()` (5-second plateau at 60% of peak).
+
+**When Finish ("100 Level Reached") is available** (`utils/calibrationWizard.js`):
+once a real tremor has been recorded (above 0.01 g — "No tremor detected
+yet" otherwise) and at least 5 seconds of recording (enough for the
+frequency-band detection). If the strongest tremor wasn't held, tapping it
+warns "Your strongest tremor was brief" with **Keep calibrating** /
+**Continue anyway**.
+
+**Recording screen.** The 5-second "Sustained at peak" bar is replaced by
+"Strongest tremor held" (best 1-second level as a share of the brief peak,
+"Held ✓" / "Brief") and a "Recording" bar showing the 5-second minimum, with
+a note under the button saying what's needed next.
+
+**Results and saving.**
+- No tremor band detected -> band filtering is left OFF (and the band kept
+  as it was); detected -> filtering on.
+- Whether the peak was held is saved (`calibrationPeakHeld`); Results warns
+  when it was brief, and Settings > Calibration says "…from a brief peak".
+- Measured values are kept within the Settings > Calibration limits (full
+  scale 0.10–4.00 g, band 0.5–20 Hz with 1 Hz between) so they can always be
+  edited there; Results says when full scale was adjusted.
+- The frequency-band detector is unchanged (Flutter's is a port of ours,
+  with the same settings).
+
+## Fortieth follow-up — skip calibration with default values; Cancel when recalibrating
+
+**First launch.** Calibration is no longer required. "Use default values"
+appears on the Welcome screen (below "Calibrate Now", so it works before the
+M5Stick is connected) and on the wizard's first screen (below "Go"). It
+applies the default calibration — 0.35 g full scale, 0.006 g noise floor,
+3.0–14.0 Hz band, band filtering off (`utils/calibrationWizard.js`
+`defaultCalibrationPatch()`, same values as Restore defaults) — marks
+first-launch setup done (`hasCalibrated`) and goes to Home. The values
+apply until the user changes them. It isn't a wizard calibration
+(`lastCalibratedAt` untouched, so no 90-day reminder); Settings >
+Calibration says "Using the default values (chosen on …)." Welcome wording
+updated ("Recommended before your first measurement"; "You can also start
+with default values and calibrate later from Settings").
+
+**Recalibrating** (from Settings > Calibration or Home's 90-day reminder):
+"Cancel" below "Go" returns to where the wizard was opened from without
+changing anything.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

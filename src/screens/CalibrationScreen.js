@@ -7,7 +7,8 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
 import * as live from '../state/liveSession';
-import { rmsOf, createSustainedPeakTracker, detectSustainedFrequencyBand, combinedDominantFreq } from '../utils/dsp';
+import { rmsOf, createSustainedPeakDetector, detectSustainedFrequencyBand, combinedDominantFreq } from '../utils/dsp';
+import { finishReadiness, calibrationResult, MIN_CALIBRATION_SECONDS, defaultCalibrationPatch } from '../utils/calibrationWizard';
 import { sendCommand } from '../services/ble';
 import { logCalibration } from '../services/calibrationLogger';
 
@@ -29,14 +30,16 @@ const CALIBRATION_DEBUG_LOGGING = true;
 export default function CalibrationScreen({ route }) {
   const c = useTheme();
   const navigation = useNavigation();
-  const { state } = useStore();
+  const { state, actions } = useStore();
   const liveState = useLiveSession();
   const fromWelcome = route?.params?.fromWelcome === true;
 
   const [phase, setPhase] = useState('setup'); // 'setup' | 'active'
-  const [meterState, setMeterState] = useState({ runningPeak: 0, currentRms: 0, sustainedValue: 0, sustainedSeconds: 0, reached: false });
+  const EMPTY_METER = { currentRms: 0, elapsedSec: 0, detector: createSustainedPeakDetector().state() };
+  const [meterState, setMeterState] = useState(EMPTY_METER);
   const trackerRef = useRef(null);
   const pollRef = useRef(null);
+  const startedAtRef = useRef(0);
 
   // Keeps the screen awake for the duration of active recording, same
   // reasoning as RecordingScreen — iOS locking the screen would suspend
@@ -69,79 +72,95 @@ export default function CalibrationScreen({ route }) {
       console.log('[calibration]', msg);
       logCalibration(msg);
     }
-    trackerRef.current = createSustainedPeakTracker();
-    setMeterState({ runningPeak: 0, currentRms: 0, sustainedValue: 0, sustainedSeconds: 0, reached: false });
+    // THIRTY-NINTH follow-up: Flutter's detector (see dsp.js
+    // createSustainedPeakDetector), fed the same ~2-second readings sessions
+    // use, sampled every 100 ms.
+    trackerRef.current = createSustainedPeakDetector();
+    startedAtRef.current = Date.now();
+    setMeterState(EMPTY_METER);
     live.beginSessionBuffers({ keepRawSamples: true }); // THIRTY-SIXTH follow-up: band detection needs the raw samples
     sendCommand('START');
     setPhase('active');
 
+    // Same ~1 s warm-up as sessions before a reading counts.
+    const WARMUP_SAMPLES = 50;
+    let tick = 0;
     pollRef.current = setInterval(() => {
       const s = live.getLiveState();
-      if (s.shortWinX.length < 8) return;
-      const rms = rmsOf(s.shortWinX, s.shortWinY, s.shortWinZ);
-      const result = trackerRef.current.update(rms, Date.now());
-
-      // Live frequency reading, for visibility into what's being detected
-      // as the recording progresses — purely informational here; the
-      // actual frequency band saved by calibration is computed as a
-      // batch analysis over the whole recording once it completes (see
-      // handleLevelReached below), not from this live value. Gated
-      // behind a minimum RMS threshold — same lesson learned (and
-      // fixed) three times already elsewhere in this project: without
-      // real signal, this would otherwise report noise as a meaningful
-      // frequency. MIN_RMS_FOR_LIVE_FREQ matches the threshold already
-      // validated inside detectSustainedFrequencyBand() for the same
-      // purpose.
-      const MIN_RMS_FOR_LIVE_FREQ = 0.01;
-      let liveFreqHz = null;
-      if (rms >= MIN_RMS_FOR_LIVE_FREQ) {
-        const sr = s.packetTimes.length > 1 ? s.packetTimes.length / 2 : 50;
-        liveFreqHz = combinedDominantFreq(s.freqWinX, s.freqWinY, s.freqWinZ, sr, 100);
+      const now = Date.now();
+      const elapsedSec = (now - startedAtRef.current) / 1000;
+      if (s.recentX.length < WARMUP_SAMPLES) {
+        setMeterState((prev) => ({ ...prev, elapsedSec }));
+        return;
       }
+      const rms = rmsOf(s.recentX, s.recentY, s.recentZ);
+      const detector = trackerRef.current.addSample(now, rms);
+      tick += 1;
 
-      if (CALIBRATION_DEBUG_LOGGING) {
+      // Logged every third reading (~300 ms), as before.
+      if (CALIBRATION_DEBUG_LOGGING && tick % 3 === 0) {
+        // Live frequency reading, for visibility into what's being detected
+        // as the recording progresses — purely informational; the band
+        // saved by calibration comes from the batch analysis at the end.
+        // Gated behind a minimum RMS (same threshold as the batch detector)
+        // so noise isn't reported as a frequency.
+        const MIN_RMS_FOR_LIVE_FREQ = 0.01;
+        let liveFreqHz = null;
+        if (rms >= MIN_RMS_FOR_LIVE_FREQ) {
+          const sr = s.packetTimes.length > 1 ? s.packetTimes.length / 2 : 50;
+          liveFreqHz = combinedDominantFreq(s.freqWinX, s.freqWinY, s.freqWinZ, sr, 100);
+        }
+        const fmtG = (v) => (v == null ? 'null' : v.toFixed(4));
         const msg =
           'rms=' +
           rms.toFixed(4) +
           ' runningPeak=' +
-          result.runningPeak.toFixed(4) +
-          ' sustainedValue=' +
-          result.sustainedValue.toFixed(4) +
-          ' sustainedSeconds=' +
-          result.sustainedSeconds.toFixed(1) +
-          ' reached=' +
-          result.reached +
+          fmtG(detector.runningPeakG) +
+          ' bestSustained=' +
+          fmtG(detector.bestSustainedG) +
+          ' bestBrief=' +
+          fmtG(detector.bestBriefG) +
+          ' held=' +
+          detector.peakWasSustained +
+          ' elapsed=' +
+          elapsedSec.toFixed(1) +
           ' liveFreqHz=' +
           (liveFreqHz != null ? liveFreqHz.toFixed(2) : 'null');
         console.log('[calibration]', msg);
         logCalibration(msg);
       }
-      setMeterState(result);
-    }, 300);
+      setMeterState({ currentRms: rms, elapsedSec, detector });
+    }, 100);
   };
 
-  const handleLevelReached = () => {
+  const completeCalibration = () => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    const detector = trackerRef.current.state();
     const { buffer } = live.stopRecordingBuffers();
     sendCommand('STOP');
-    const fullScaleG = meterState.sustainedValue;
     const band = detectSustainedFrequencyBand(buffer);
-    const newTremorBandMinHz = band ? Math.max(0.5, band.minHz - 1) : state.settings.tremorBandMinHz;
-    const newTremorBandMaxHz = band ? band.maxHz + 1 : state.settings.tremorBandMaxHz;
+    const result = calibrationResult({ fullScaleG: detector.fullScaleG, band, current: state.settings });
 
     if (CALIBRATION_DEBUG_LOGGING) {
       const msg =
         'final computed values — FULL_SCALE_G=' +
-        fullScaleG.toFixed(4) +
+        result.fullScaleG.toFixed(4) +
+        (result.fullScaleAdjusted ? ` (measured ${result.measuredFullScaleG.toFixed(4)}, kept within limits)` : '') +
+        ' peakHeld=' +
+        detector.peakWasSustained +
+        ' bestSustained=' +
+        (detector.bestSustainedG ?? 0).toFixed(4) +
+        ' bestBrief=' +
+        (detector.bestBriefG ?? 0).toFixed(4) +
         ' measuredBand=' +
         (band ? `${band.minHz.toFixed(2)}-${band.maxHz.toFixed(2)}Hz` : 'none detected') +
         ' TREMOR_BAND_MIN_HZ=' +
-        newTremorBandMinHz.toFixed(2) +
+        result.tremorBandMinHz.toFixed(2) +
         ' TREMOR_BAND_MAX_HZ=' +
-        newTremorBandMaxHz.toFixed(2) +
+        result.tremorBandMaxHz.toFixed(2) +
         ' NOISE_FLOOR_G=' +
         state.settings.noiseFloorG +
         ' (unchanged — not measured by calibration)' +
@@ -152,17 +171,38 @@ export default function CalibrationScreen({ route }) {
     }
 
     navigation.replace('calibrationResults', {
-      fullScaleG,
-      // Derived per the design doc: measured min - 1Hz / measured max + 1Hz,
-      // buffering the band so it doesn't clip the edges of the user's real
-      // tremor range due to measurement noise. Falls back to the current
-      // settings' band if nothing sustained was detected (e.g. too short
-      // or too gentle a recording) rather than saving something empty.
-      tremorBandMinHz: newTremorBandMinHz,
-      tremorBandMaxHz: newTremorBandMaxHz,
+      fullScaleG: result.fullScaleG,
+      measuredFullScaleG: result.measuredFullScaleG,
+      fullScaleAdjusted: result.fullScaleAdjusted,
+      // Measured min - 1 Hz / max + 1 Hz; kept at the current settings when
+      // no sustained band was detected (band filtering then stays off).
+      tremorBandMinHz: result.tremorBandMinHz,
+      tremorBandMaxHz: result.tremorBandMaxHz,
       measuredBand: band,
+      peakHeld: detector.peakWasSustained,
       fromWelcome,
     });
+  };
+
+  // THIRTY-NINTH follow-up: Finish is offered once there's a real tremor
+  // and at least MIN_CALIBRATION_SECONDS of recording. If the strongest
+  // effort was only brief, warn first.
+  const handleLevelReached = () => {
+    const detector = trackerRef.current.state();
+    if (!finishReadiness(detector, meterState.elapsedSec).ready) return;
+    if (detector.peakWasSustained) {
+      completeCalibration();
+      return;
+    }
+    Alert.alert(
+      'Your strongest tremor was brief',
+      'It wasn’t held for a full second, so your level 100 would be based on a brief burst and may be less accurate. ' +
+        'Try holding your biggest tremor a little longer.',
+      [
+        { text: 'Keep calibrating', style: 'cancel' },
+        { text: 'Continue anyway', onPress: completeCalibration },
+      ],
+    );
   };
 
   if (!state.isConnected) {
@@ -218,17 +258,52 @@ export default function CalibrationScreen({ route }) {
           <Pressable onPress={startActive} style={[styles.button, { backgroundColor: c.info }]}>
             <Text style={styles.buttonText}>Go</Text>
           </Pressable>
+          {/* FORTIETH follow-up: first launch can skip with the default
+              calibration; otherwise (Settings or Home's reminder) Cancel
+              returns without changing anything. */}
+          {fromWelcome ? (
+            <Pressable
+              onPress={() => {
+                actions.updateSettings(defaultCalibrationPatch());
+                navigation.reset({ index: 0, routes: [{ name: 'mainTabs' }] });
+              }}
+              style={[styles.footerButton, { borderColor: c.bd2 }]}
+              accessibilityRole="button">
+              <Text style={{ color: c.tx1, fontWeight: '600' }}>Use default values</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={() => navigation.goBack()}
+              style={[styles.footerButton, { borderColor: c.bd2 }]}
+              accessibilityRole="button">
+              <Text style={{ color: c.tx1, fontWeight: '600' }}>Cancel</Text>
+            </Pressable>
+          )}
         </View>
       </SafeAreaView>
     );
   }
 
   // phase === 'active'
-  // Current intensity relative to the peak found so far — confirmed via
-  // user testing the old version (a flat 100% the moment any signal
-  // existed) wasn't a meaningful live reading at all.
-  const meterPct = meterState.runningPeak > 0 ? Math.min(100, (meterState.currentRms / meterState.runningPeak) * 100) : 0;
-  const sustainPct = Math.min(100, (meterState.sustainedSeconds / 5) * 100);
+  // THIRTY-NINTH follow-up display:
+  //  - Current intensity: the live reading relative to the strongest so far.
+  //  - Strongest effort held: the best 1-second level as a share of the best
+  //    brief peak; 80% or more counts as held.
+  //  - Recording: time so far, with the minimum needed before Finish.
+  const d = meterState.detector;
+  const readiness = finishReadiness(d, meterState.elapsedSec);
+  const meterPct = d.runningPeakG > 0 ? Math.min(100, (meterState.currentRms / d.runningPeakG) * 100) : 0;
+  const heldPct = d.bestSustainedG != null && d.bestBriefG ? Math.min(100, (d.bestSustainedG / d.bestBriefG) * 100) : 0;
+  const heldKnown = d.bestSustainedG != null && d.bestBriefG != null;
+  const recordPct = Math.min(100, (meterState.elapsedSec / MIN_CALIBRATION_SECONDS) * 100);
+  const footerNote =
+    readiness.reason === 'noTremor'
+      ? 'No tremor detected yet — try the movements above'
+      : readiness.reason === 'tooShort'
+      ? `Keep going — at least ${MIN_CALIBRATION_SECONDS} seconds of recording needed`
+      : !d.peakWasSustained
+      ? 'Try to hold your biggest tremor for a full second'
+      : 'Tap when you’ve reached your biggest tremor';
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
@@ -246,28 +321,50 @@ export default function CalibrationScreen({ route }) {
           <View style={[styles.warningCard, { backgroundColor: c.bgWarning, borderColor: c.bd3, marginTop: 12 }]}>
             <Text style={[styles.warningText, { color: c.tx1 }]}>
               Keep movements brief (under half a second) — don't swing the limb or move around. We're measuring
-              the tremor itself, not the motion.
+              the tremor itself, not the motion. Then hold your strongest tremor for at least a second: that level
+              becomes your level 100.
             </Text>
           </View>
         </View>
 
         <View style={styles.meterRow}>
           <Text style={{ color: c.tx2, fontSize: 13 }}>Current intensity</Text>
-          <Text style={{ color: meterState.reached ? c.success : c.warning, fontSize: 13, fontWeight: '600' }}>
-            {meterState.reached ? 'Peak held' : 'Building peak…'}
+        </View>
+        <View style={[styles.track, { backgroundColor: c.bg3 }]}>
+          <View style={[styles.fill, { width: `${meterPct}%`, backgroundColor: c.warning }]} />
+        </View>
+        <Text style={{ color: c.tx3, fontSize: 11, marginTop: 4, alignSelf: 'flex-start' }}>
+          Compared with your strongest tremor so far.
+        </Text>
+
+        <View style={[styles.meterRow, { marginTop: 18 }]}>
+          <Text style={{ color: c.tx2, fontSize: 13 }}>Strongest tremor held</Text>
+          <Text
+            style={{
+              color: !heldKnown ? c.tx3 : d.peakWasSustained ? c.success : c.warning,
+              fontSize: 13,
+              fontWeight: '600',
+            }}>
+            {!heldKnown ? '—' : d.peakWasSustained ? 'Held ✓' : 'Brief'}
           </Text>
         </View>
         <View style={[styles.track, { backgroundColor: c.bg3 }]}>
-          <View style={[styles.fill, { width: `${meterPct}%`, backgroundColor: meterState.reached ? c.success : c.warning }]} />
+          <View
+            style={[styles.fill, { width: `${heldPct}%`, backgroundColor: d.peakWasSustained ? c.success : c.warning }]}
+          />
         </View>
-        <Text style={{ color: c.tx3, fontSize: 11, marginTop: 4 }}>This is your longest, most intense tremor so far.</Text>
+        <Text style={{ color: c.tx3, fontSize: 11, marginTop: 4, alignSelf: 'flex-start' }}>
+          How much of your strongest tremor you held for a full second (80% or more counts as held).
+        </Text>
 
         <View style={[styles.meterRow, { marginTop: 18 }]}>
-          <Text style={{ color: c.tx2, fontSize: 13 }}>Sustained at peak</Text>
-          <Text style={{ color: c.tx2, fontSize: 13 }}>{meterState.sustainedSeconds.toFixed(1)}s / 5.0s</Text>
+          <Text style={{ color: c.tx2, fontSize: 13 }}>Recording</Text>
+          <Text style={{ color: c.tx2, fontSize: 13 }}>
+            {meterState.elapsedSec.toFixed(1)}s{meterState.elapsedSec < MIN_CALIBRATION_SECONDS ? ` / ${MIN_CALIBRATION_SECONDS}.0s minimum` : ''}
+          </Text>
         </View>
         <View style={[styles.track, { backgroundColor: c.bg3 }]}>
-          <View style={[styles.fill, { width: `${sustainPct}%`, backgroundColor: c.success }]} />
+          <View style={[styles.fill, { width: `${recordPct}%`, backgroundColor: c.info }]} />
         </View>
 
         <Text style={{ color: c.tx3, fontSize: 11, textAlign: 'center', marginTop: 16 }}>
@@ -277,14 +374,14 @@ export default function CalibrationScreen({ route }) {
 
       <View style={styles.footer}>
         <Pressable
-          disabled={!meterState.reached}
+          disabled={!readiness.ready}
           onPress={handleLevelReached}
-          style={[styles.button, { backgroundColor: meterState.reached ? c.success : c.bg3 }]}>
-          <Text style={[styles.buttonText, { color: meterState.reached ? '#fff' : c.tx3 }]}>100 Level Reached</Text>
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !readiness.ready }}
+          style={[styles.button, { backgroundColor: readiness.ready ? c.success : c.bg3 }]}>
+          <Text style={[styles.buttonText, { color: readiness.ready ? '#fff' : c.tx3 }]}>100 Level Reached</Text>
         </Pressable>
-        {!meterState.reached && (
-          <Text style={[styles.footerNote, { color: c.tx3 }]}>Hold your peak a little longer to unlock this</Text>
-        )}
+        <Text style={[styles.footerNote, { color: c.tx3 }]}>{footerNote}</Text>
       </View>
     </SafeAreaView>
   );
@@ -311,4 +408,5 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   secondaryButton: { borderRadius: radii.lg, borderWidth: 1, paddingVertical: 14, paddingHorizontal: 24, marginTop: 16 },
   footerNote: { fontSize: 11, textAlign: 'center', marginTop: 8 },
+  footerButton: { borderRadius: radii.lg, borderWidth: 1, paddingVertical: 14, alignItems: 'center', marginTop: 10 },
 });

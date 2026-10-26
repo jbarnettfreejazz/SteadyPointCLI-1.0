@@ -20,7 +20,8 @@ export default function CalibrationResultsScreen({ route }) {
   const c = useTheme();
   const navigation = useNavigation();
   const { state, actions } = useStore();
-  const { fullScaleG, tremorBandMinHz, tremorBandMaxHz, measuredBand, fromWelcome } = route.params;
+  const { fullScaleG, tremorBandMinHz, tremorBandMaxHz, measuredBand, fromWelcome, peakHeld = true, fullScaleAdjusted = false, measuredFullScaleG } =
+    route.params;
 
   const handleSave = async () => {
     const patch = {
@@ -31,7 +32,11 @@ export default function CalibrationResultsScreen({ route }) {
       lastCalibratedAt: new Date().toISOString(),
       // THIRTY-FIFTH follow-up: saving a measured calibration turns band
       // filtering on and records where the values came from.
-      bandFilterEnabled: true,
+      // THIRTY-NINTH follow-up: ...but only when a tremor band was actually
+      // detected; otherwise filtering is left off. Also records whether the
+      // level 100 came from a held peak or a brief one.
+      bandFilterEnabled: !!measuredBand,
+      calibrationPeakHeld: !!peakHeld,
       calibrationSource: 'wizard',
       calibrationSetAt: new Date().toISOString(),
     };
@@ -84,12 +89,34 @@ export default function CalibrationResultsScreen({ route }) {
           <Text style={{ color: c.info, fontSize: 16, fontWeight: '700' }}>{tremorBandMaxHz.toFixed(1)} Hz</Text>
         </View>
 
-        {!measuredBand && (
+        {/* THIRTY-NINTH follow-up notes */}
+        {!peakHeld && (
+          <View style={[styles.warningCard, { backgroundColor: c.bgWarning, borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx1, fontSize: 12, lineHeight: 18 }}>
+              Your strongest tremor wasn't held for a full second, so your level 100 is based on a brief burst and
+              may be less accurate. Recalibrating with a longer hold will give a steadier value.
+            </Text>
+          </View>
+        )}
+        {fullScaleAdjusted && (
+          <View style={[styles.warningCard, { backgroundColor: c.bgWarning, borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx1, fontSize: 12, lineHeight: 18 }}>
+              The measured level ({(measuredFullScaleG ?? fullScaleG).toFixed(2)} g) was outside the allowed range of
+              0.10 – 4.00 g, so {fullScaleG.toFixed(2)} g will be saved.
+            </Text>
+          </View>
+        )}
+        {measuredBand ? (
+          <Text style={{ color: c.tx2, fontSize: 12, lineHeight: 18, marginTop: 14 }}>
+            Band filtering will be turned on, so intensity counts only motion within this tremor band.
+          </Text>
+        ) : (
           <View style={[styles.warningCard, { backgroundColor: c.bgWarning, borderColor: c.bd3 }]}>
             <Text style={{ color: c.tx1, fontSize: 12, lineHeight: 18 }}>
               We couldn't clearly measure a sustained tremor frequency from that recording, so the frequency band
-              above was kept at your existing setting. Your full-scale amplitude was still captured normally — if
-              you'd like a frequency reading too, try recalibrating with a longer, steadier hold.
+              above was kept at your existing setting and band filtering will be left off. Your full-scale amplitude
+              was still captured normally — if you'd like a frequency reading too, try recalibrating with a longer,
+              steadier hold.
             </Text>
           </View>
         )}
