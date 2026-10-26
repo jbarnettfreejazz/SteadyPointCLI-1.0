@@ -317,20 +317,18 @@ export function detectSustainedFrequencyBand(sessionBuffer, opts = {}) {
 }
 
 // Raised-cosine (Hann-style) taper weight for bandLimitedRms() below.
-// Returns 1.0 for a frequency inside [minHz, maxHz], 0.0 once more than
-// taperHz away from the nearest edge, and a smooth cosine ramp in between
-// — rather than a hard 1/0 cutoff exactly at minHz/maxHz. See
-// bandLimitedRms() for why a soft edge matters here.
+// FORTY-SECOND follow-up: the soft ramp now sits INSIDE the band — 0 at
+// minHz rising to 1 at minHz + taperHz, and 1 at maxHz - taperHz falling
+// to 0 at maxHz — so nothing outside [minHz, maxHz] is weighted at all
+// (it used to ramp outside the limits, from minHz - taperHz and up to
+// maxHz + taperHz). Still a smooth ramp rather than a hard 1/0 cutoff, so
+// tremor wandering near a limit doesn't flicker in and out. For a band
+// narrower than 2 x taperHz the two ramps meet in the middle.
 function taperWeight(f, minHz, maxHz, taperHz) {
-  if (taperHz <= 0) return f >= minHz && f <= maxHz ? 1 : 0;
-  if (f < minHz - taperHz || f > maxHz + taperHz) return 0;
-  if (f >= minHz && f <= maxHz) return 1;
-  if (f < minHz) {
-    const t = (f - (minHz - taperHz)) / taperHz; // 0 at the outer edge -> 1 at minHz
-    return 0.5 - 0.5 * Math.cos(Math.PI * t);
-  }
-  const t = (f - maxHz) / taperHz; // 0 at maxHz -> 1 at the outer edge
-  return 0.5 + 0.5 * Math.cos(Math.PI * t);
+  if (f < minHz || f > maxHz) return 0;
+  if (taperHz <= 0) return 1;
+  const ramp = (t) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, t)));
+  return Math.min(ramp((f - minHz) / taperHz), ramp((maxHz - f) / taperHz));
 }
 
 // RMS-equivalent amplitude of ONLY the frequency content inside a user's
@@ -353,6 +351,22 @@ function taperWeight(f, minHz, maxHz, taperHz) {
 // outside it. taperHz controls how wide that soft margin is on each
 // side; defaults to 1.5Hz.
 //
+// FORTY-SECOND follow-up: that 0.5 Hz ramp now sits inside the band (see
+// taperWeight()), so motion outside [minHz, maxHz] isn't counted at all.
+// FORTY-FIRST follow-up: the soft margin is now 0.5 Hz (was 1.5 Hz). With
+// 1.5 Hz, motion well below the band still partly counted — a tester with
+// a 5.0 Hz minimum heard sonification from a 3.8 Hz tremor (~30% of it got
+// through). Wizard-measured bands already carry a 1 Hz margin each side,
+// so real tremor near the measured edge is still covered.
+//
+// Also new: each axis's 2-second slice has its straight-line drift removed
+// (not just its mean) and is shaped with a Hann window before the FFT.
+// Without that, large slow movements — an arm movement, or turning the
+// wrist, which shifts gravity across the axes and shows up as a steady
+// drift — "leaked" a little of their energy into every frequency,
+// including the band. The Hann window's power loss is compensated, so a
+// steady in-band tremor reads the same as before.
+//
 // Returned on the same scale as rmsOf() (same units, same "gravity-free
 // AC-RMS across all three axes" definition) via Parseval's theorem, so it
 // can be passed straight into the existing rmsToLevel()/fullScaleG
@@ -365,7 +379,34 @@ function taperWeight(f, minHz, maxHz, taperHz) {
 // effort's energy sits outside the tremor band. In practice this should
 // be small for genuine tremor-like motion, which is mostly in-band by
 // nature.
-export function bandLimitedRms(xs, ys, zs, sr, minHz, maxHz, taperHz = 1.5) {
+export const BAND_TAPER_HZ = 0.5;
+
+// Removes the least-squares straight line (offset + drift) from a slice.
+function detrend(values) {
+  const n = values.length;
+  const xm = (n - 1) / 2;
+  const ym = mean(values);
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (i - xm) * (values[i] - ym);
+    sxx += (i - xm) * (i - xm);
+  }
+  const slope = sxx > 0 ? sxy / sxx : 0;
+  return values.map((v, i) => v - ym - slope * (i - xm));
+}
+
+// Hann window of length n, and its mean square (for power compensation).
+const hannCache = new Map();
+function hann(n) {
+  if (!hannCache.has(n)) {
+    const w = Array.from({ length: n }, (_, i) => (n > 1 ? 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1)) : 1));
+    hannCache.set(n, { w, meanSq: w.reduce((t, v) => t + v * v, 0) / n });
+  }
+  return hannCache.get(n);
+}
+
+export function bandLimitedRms(xs, ys, zs, sr, minHz, maxHz, taperHz = BAND_TAPER_HZ) {
   const n = xs.length;
   if (!n || !ys.length || !zs.length) return 0;
 
@@ -374,8 +415,9 @@ export function bandLimitedRms(xs, ys, zs, sr, minHz, maxHz, taperHz = 1.5) {
     if (axis.length < 8) continue;
     let padN = 1;
     while (padN < axis.length) padN <<= 1;
-    const m = mean(axis);
-    const re = axis.map((v) => v - m).concat(new Array(Math.max(0, padN - axis.length)).fill(0));
+    const { w, meanSq } = hann(axis.length);
+    const shaped = detrend(axis).map((v, i) => v * w[i]);
+    const re = shaped.concat(new Array(Math.max(0, padN - axis.length)).fill(0));
     const im = new Array(padN).fill(0);
     fft(re, im);
 
@@ -392,7 +434,9 @@ export function bandLimitedRms(xs, ys, zs, sr, minHz, maxHz, taperHz = 1.5) {
     // real-valued signal's spectrum; DC/Nyquist are negligible here since
     // the signal is mean-centered and taperWeight() zeroes anything near
     // 0Hz or the Nyquist edge anyway).
-    bandSumSq += (2 * axisPower) / padN;
+    // Divided by the window's mean square to undo the Hann window's power
+    // loss, so the result stays on the same scale as rmsOf().
+    bandSumSq += (2 * axisPower) / padN / meanSq;
   }
 
   // Matches rmsOf()'s definition: sqrt of the mean (per original sample)

@@ -2661,6 +2661,47 @@ with default values and calibrate later from Settings").
 "Cancel" below "Go" returns to where the wizard was opened from without
 changing anything.
 
+## Forty-first follow-up — sharper tremor band edge, no leakage from slow movement
+
+A tester heard sonification from a 3.8 Hz tremor with the band minimum at
+5.0 Hz and band filtering on. Cause: the band's soft edge extended 1.5 Hz
+past each limit, so ~30–40% of a 3.8 Hz motion still counted. Two changes
+to `dsp.js` `bandLimitedRms()` (applies to new sessions; saved ones are
+unchanged):
+
+- **Soft edge narrowed from 1.5 Hz to 0.5 Hz** (`BAND_TAPER_HZ`). With a
+  5.0 Hz minimum, motion below 4.5 Hz no longer counts. Wizard-measured
+  bands still carry their 1 Hz margin each side.
+- **No more leakage from large, slow movement.** Each axis's 2-second slice
+  now has its straight-line drift removed (not just its mean) and is shaped
+  with a Hann window (power-compensated) before the frequency analysis, so
+  arm movements and wrist turns (gravity shifting across the axes) don't
+  spill energy into the band.
+
+Synthetic check (0.35 g full scale, band 5–14 Hz), intensity before -> after:
+3.8 Hz tremor 7 -> 0; wrist-turn drift 3 -> 0; 1 Hz arm movement 2 -> 0;
+6 Hz tremor during arm movement + drift now measures exactly like the tremor
+alone; steady in-band tremor unchanged (6 Hz 21 -> 22, 13.8 Hz 19 -> 18).
+Tremor just inside an edge reads a few percent lower (e.g. 5.2 Hz: 0.070 ->
+0.068 g).
+
+## Forty-second follow-up — tremor band fade moved inside the band
+
+At the tester's request, nothing outside the tremor band's limits counts any
+more. The 0.5 Hz soft fade at each edge now sits INSIDE the band
+(`dsp.js` `taperWeight()`): it rises from 0 at the minimum to full weight
+0.5 Hz above it, and falls from full weight 0.5 Hz below the maximum to 0
+at the maximum. Before, it ran outside the limits (from minimum − 0.5 Hz,
+up to maximum + 0.5 Hz). It's still a smooth ramp, not a hard cutoff, so
+tremor wandering near a limit doesn't flicker in and out.
+
+Share of a steady tremor counted with band 5–14 Hz (2-second readings
+spread energy over roughly ±1 Hz, so the edge can't be perfectly sharp):
+3.8 Hz 1%, 4.5 Hz 7%, 4.9 Hz 33%, 5.0 Hz 44%, 5.5 Hz 89%, 5.8–13.2 Hz
+~100%, 14.0 Hz 49%, 15 Hz 1%. Trade-off: tremor right at a limit now counts
+less. Bands from the calibration wizard are unaffected in practice — they
+carry a 1 Hz margin around the measured tremor. Applies to new sessions.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop
