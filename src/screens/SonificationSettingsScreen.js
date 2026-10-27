@@ -9,6 +9,13 @@ import { useStore } from '../state/StoreContext';
 // THIRTY-FIFTH follow-up: Settings > Sonification sub-page — the former
 // SONIFICATION section of the main Settings page, moved here unchanged.
 
+// FORTY-FOURTH follow-up: what the pitch follows. Volume follows intensity
+// either way.
+export const PITCH_MODES = [
+  { key: 'intensity', label: 'Intensity', help: 'Stronger tremor plays a higher note.' },
+  { key: 'frequency', label: 'Frequency', help: 'Faster tremor plays a higher note.' },
+];
+
 export const VOICE_OPTIONS = [
   { key: 'cello', label: 'Cello' },
   { key: 'viola', label: 'Viola' },
@@ -38,6 +45,12 @@ export default function SonificationSettingsScreen() {
   // pill is always shown selected. persistence.js also migrates it.
   const savedVoice = state.settings.sonificationVoice ?? 'cello';
   const currentVoice = VOICE_OPTIONS.some((v) => v.key === savedVoice) ? savedVoice : 'cello';
+  const pitchMode = state.settings.sonificationMode === 'frequency' ? 'frequency' : 'intensity';
+  const s = state.settings;
+  const bandText =
+    s.bandFilterEnabled && s.tremorBandMaxHz > s.tremorBandMinHz
+      ? `your tremor band (${s.tremorBandMinHz.toFixed(1)}–${s.tremorBandMaxHz.toFixed(1)} Hz)`
+      : '3–14 Hz (band filtering is off)';
   const customMinHz = state.settings.customTonalRangeMinHz ?? 200;
   const customMaxHz = state.settings.customTonalRangeMaxHz ?? 700;
 
@@ -113,6 +126,36 @@ export default function SonificationSettingsScreen() {
           <Text style={{ color: c.tx2, fontSize: 14 }}>Settings</Text>
         </Pressable>
         <Text style={[styles.h1, { color: c.tx1 }]}>Sonification</Text>
+
+        {/* FORTY-FOURTH follow-up: Pitch follows Intensity / Frequency */}
+        <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3, marginBottom: 16 }]}>
+          <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Pitch follows</Text>
+          <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 14 }}>
+            Choose what changes the note you hear. Volume always follows your tremor's intensity.
+          </Text>
+          <View style={styles.pillRow}>
+            {PITCH_MODES.map((m) => {
+              const selected = pitchMode === m.key;
+              return (
+                <Pressable
+                  key={m.key}
+                  onPress={() => actions.updateSettings({ sonificationMode: m.key })}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  style={[
+                    styles.pill,
+                    { borderColor: selected ? c.info : c.bd3, backgroundColor: selected ? c.bgInfo : c.bg1 },
+                  ]}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: selected ? c.info : c.tx1 }}>{m.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text style={{ fontSize: 12, color: c.tx3, lineHeight: 17, marginTop: 10 }}>
+            {PITCH_MODES.find((m) => m.key === pitchMode).help}
+            {pitchMode === 'frequency' ? ` The full range of notes spans ${bandText}.` : ''}
+          </Text>
+        </View>
 
         <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
           <Text style={{ fontSize: 16, fontWeight: '600', color: c.tx1, marginBottom: 6 }}>Tonal Range</Text>

@@ -54,9 +54,9 @@ export default function SettingsScreen() {
   }`;
   const voice = VOICE_OPTIONS.find((v) => v.key === s.sonificationVoice) || VOICE_OPTIONS[0];
   const sonificationSummary =
-    voice.key === 'custom'
+    (voice.key === 'custom'
       ? `Custom · ${Math.round(s.customTonalRangeMinHz ?? 200)}–${Math.round(s.customTonalRangeMaxHz ?? 700)} Hz`
-      : voice.label;
+      : voice.label) + (s.sonificationMode === 'frequency' ? ' · pitch follows frequency' : ''); // FORTY-FOURTH follow-up
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>

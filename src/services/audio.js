@@ -242,6 +242,12 @@ function bundledFilePath(fileName) {
 // being outrun by a ramp scheduled after silenceAudio() already ran.
 const SONIFICATION_DEBUG_LOGGING = false;
 
+// FORTY-THIRD follow-up feature flag: true = during a session, sound fades
+// out over REST_FADE_SEC when intensity reaches 0 (see restFade below), and
+// each voice's gainRampEndTime tracks the latest pending ramp. false = the
+// previous behaviour exactly: an instant stopHard() at rest.
+const REST_FADE_ENABLED = true;
+
 // TENTH follow-up, continued: the debug-log capture showed buzzing present
 // even during several seconds of a completely static hold (fixed
 // frequency, fixed gain, zero automation events firing) — ruling out
@@ -378,7 +384,10 @@ class SineVoice {
     const t = this.ctx.currentTime;
     this.output.gain.setValueAtTime(this.output.gain.value, t);
     this.output.gain.linearRampToValueAtTime(level, t + rampSec);
-    this.gainRampEndTime = t + rampSec;
+    // FORTY-THIRD follow-up: the LATEST pending ramp end, not just this
+    // one's — a shorter ramp scheduled after a longer one doesn't cancel
+    // it, so stopHard()'s guard must cover the longer one too.
+    this.gainRampEndTime = REST_FADE_ENABLED ? Math.max(this.gainRampEndTime || 0, t + rampSec) : t + rampSec;
   }
 
   setBrightness(value, rampSec) {
@@ -587,7 +596,7 @@ class ZonedSampleVoice {
     const t = this.ctx.currentTime;
     g.setValueAtTime(g.value, t);
     g.linearRampToValueAtTime(level, t + rampSec);
-    this.gainRampEndTime = t + rampSec;
+    this.gainRampEndTime = REST_FADE_ENABLED ? Math.max(this.gainRampEndTime || 0, t + rampSec) : t + rampSec; // FORTY-THIRD follow-up — see SineVoice.setGain()
   }
 
   setFrequency(freq, rampSec) {
@@ -752,6 +761,31 @@ export function setCustomTonalRange(minHz, maxHz) {
   VOICE_CONFIG.custom.maxFreq = hi;
 }
 
+// FORTY-FOURTH follow-up: what the pitch follows — 'intensity' (the
+// original mapping: louder tremor = higher note) or 'frequency' (the
+// tremor's frequency: faster tremor = higher note). Volume follows
+// intensity in both. Set per session from Settings > Sonification
+// (sessionLogic.js applySoundSettings()). In frequency mode, pitchRangeHz
+// (the tremor band when band filtering is on, else 3-14 Hz) maps onto the
+// voice's full range, with the same exponential curve as intensity, and
+// the pitch glides (smoothed by PITCH_FREQ_SMOOTHING_ALPHA per packet).
+let pitchMode = 'intensity';
+let pitchRangeHz = { minHz: 3, maxHz: 14 };
+const PITCH_FREQ_SMOOTHING_ALPHA = 0.05; // per ~20 ms packet: ~0.4 s to settle
+let freqPitchNorm = null; // smoothed 0-1 position of the tremor frequency in pitchRangeHz
+
+export function setPitchRange(minHz, maxHz) {
+  const lo = Number(minHz);
+  const hi = Number(maxHz);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo < 0 || hi <= lo) return;
+  pitchRangeHz = { minHz: lo, maxHz: hi };
+}
+
+export function setPitchMode(mode, minHz, maxHz) {
+  pitchMode = mode === 'frequency' ? 'frequency' : 'intensity';
+  setPitchRange(minHz, maxHz);
+}
+
 // "custom" plays through its own SineVoice instance (see VOICE_CONFIG
 // comment above) rather than a recorded sample.
 function activeVoice() {
@@ -856,6 +890,31 @@ const BRIGHT_EPSILON = 0.02;
 // seconds) still comes through promptly.
 const CUSTOM_LEVEL_SMOOTHING_ALPHA = 0.05;
 let customSmoothedLevel = null;
+
+// FORTY-THIRD follow-up: during a session, sound now fades out over
+// REST_FADE_SEC when intensity reaches 0, instead of stopping instantly
+// (the instant stop was audible as an abrupt cut — e.g. as tremor drifts
+// out of the tremor band). The fade is done in steps: each throttled push
+// sets a slightly lower gain with the same short setGain() ramps used
+// while sound is playing, then the protected stopHard() finishes it.
+// Deliberately NOT one long scheduled ramp to 0: scheduled ramps can't be
+// cancelled safely here (see the cancelScheduledValues() SIGSEGV note),
+// so if tremor came back mid-fade a leftover long ramp would still pull
+// the sound down to silence. With steps, normal pushes simply take over
+// from the current level. Ending a session still stops instantly
+// (silenceAudio() -> stopHard()). Pitch and brightness are held while
+// fading so the tone doesn't slide down as it fades.
+//
+// The fade starts once any gain ramp still scheduled has finished (holding
+// the current level until then — at most CUSTOM_RAMP_MAX_SEC) and steps
+// down with fixed ramps of one push interval, each ending before the next
+// push, so no fade step outlives the one after it (a longer one would
+// otherwise pull the volume back up when it finished). A momentary dip to
+// 0 (e.g. one reading) resumes from the level before it rather than from
+// silence (restSavedLevel).
+const REST_FADE_SEC = 0.5;
+let restFade = null; // { startMs, fromGain } while fading to rest
+let restSavedLevel = null; // smoothed level just before reaching rest
 
 // SECOND follow-up (the smoothing fix above reduced, but didn't eliminate,
 // the pulsation — now reported as occurring specifically WHILE the tremor
@@ -1038,6 +1097,9 @@ export function initAudio() {
 
   lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
   customSmoothedLevel = null;
+  restFade = null;
+  restSavedLevel = null;
+  freqPitchNorm = null;
   lastCustomPitchUpdateTime = 0;
   customGainLastPushMs = 0;
   customBrightLastPushMs = 0;
@@ -1051,7 +1113,7 @@ export function initAudio() {
 // recentX/Y/Z are the rolling packet buffers from liveSession.js.
 // tremorLevel is the same 0-100 intensity value shown elsewhere in the
 // app. sr is the current estimated packet rate (see liveSession.js).
-export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin) {
+export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin, pitchFreqHz = null) {
   const voice = activeVoice();
   if (!voice || !voice.ready) return; // still loading samples
   // EIGHTEENTH follow-up: only a fallback for a suspension we didn't
@@ -1129,7 +1191,34 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
     const atRest = normLevel === 0;
     // See CUSTOM_LEVEL_SMOOTHING_ALPHA's comment above. Updated every
     // packet (cheap, pure JS) regardless of the native-push throttle below.
+    // FORTY-THIRD follow-up: tremor returning mid-fade carries on from the
+    // fade's current level instead of restarting from silence.
+    if (!REST_FADE_ENABLED) {
+      // previous behaviour: no fade state to carry over
+    } else if (!atRest && restFade) {
+      // Tremor came back mid-fade: return to the level from just before the
+      // fade and push it straight away (lastSent.gain = -1 bypasses
+      // GAIN_EPSILON, which would otherwise leave the volume stuck up to
+      // 0.03 below where it was).
+      customSmoothedLevel = restSavedLevel ?? (config.maxGain > 0 ? Math.max(0, lastSent.gain) / config.maxGain : 0);
+      lastSent.gain = -1;
+      restFade = null;
+      restSavedLevel = null;
+    } else if (!atRest && restSavedLevel != null) {
+      customSmoothedLevel = restSavedLevel;
+      restSavedLevel = null;
+    } else if (atRest && restSavedLevel == null && customSmoothedLevel > 0) {
+      restSavedLevel = customSmoothedLevel;
+    }
     customSmoothedLevel = atRest ? 0 : (customSmoothedLevel == null ? normLevel : customSmoothedLevel * (1 - CUSTOM_LEVEL_SMOOTHING_ALPHA) + normLevel * CUSTOM_LEVEL_SMOOTHING_ALPHA);
+    // FORTY-FOURTH follow-up: frequency-driven pitch glides toward the
+    // tremor frequency's position in pitchRangeHz; with no reading (no
+    // tremor) it simply holds.
+    if (pitchMode === 'frequency' && typeof pitchFreqHz === 'number' && Number.isFinite(pitchFreqHz)) {
+      const span = pitchRangeHz.maxHz - pitchRangeHz.minHz;
+      const target = Math.max(0, Math.min(1, (pitchFreqHz - pitchRangeHz.minHz) / span));
+      freqPitchNorm = freqPitchNorm == null ? target : freqPitchNorm * (1 - PITCH_FREQ_SMOOTHING_ALPHA) + target * PITCH_FREQ_SMOOTHING_ALPHA;
+    }
 
     // FOURTH follow-up: smoothing gain/brightness (the fix above) made the
     // pulsation MORE rapid and pulled it closer in pitch to the carrier —
@@ -1178,12 +1267,46 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
       // carries the fix (the STALE_RAMP_GUARD_SEC backstop) — reuse it
       // here rather than a plain setGain() call, so reaching true rest
       // gets the same protection as ending a session does.
-      if (gain !== lastSent.gain) {
-        if (SONIFICATION_DEBUG_LOGGING) console.log('[sonification:rest]', 'at=' + nowMs, 'pendingGainRampSec=' + (voice.gainRampEndTime - voice.ctx.currentTime).toFixed(2));
-        voice.stopHard(voice.ctx.currentTime);
-        lastSent.gain = gain;
-        customGainLastPushMs = nowMs;
-        customGainPushCount += 1; // see the counters' comment above
+      //
+      // FORTY-THIRD follow-up: if sound was playing, fade it out over
+      // REST_FADE_SEC in steps first (see restFade above); the stopHard()
+      // below then finishes at true silence with the same protection.
+      if (!REST_FADE_ENABLED) {
+        // Previous behaviour (flag off): instant, protected stop at rest.
+        if (gain !== lastSent.gain) {
+          if (SONIFICATION_DEBUG_LOGGING) console.log('[sonification:rest]', 'at=' + nowMs, 'pendingGainRampSec=' + (voice.gainRampEndTime - voice.ctx.currentTime).toFixed(2));
+          voice.stopHard(voice.ctx.currentTime);
+          lastSent.gain = gain;
+          customGainLastPushMs = nowMs;
+          customGainPushCount += 1; // see the counters' comment above
+        }
+      } else {
+        if (lastSent.gain > 0 && !restFade) {
+          const pendingMs = Math.max(0, (voice.gainRampEndTime - voice.ctx.currentTime) * 1000);
+          restFade = { startMs: nowMs + pendingMs, fromGain: lastSent.gain };
+        }
+        const fadeP = restFade ? (nowMs - restFade.startMs) / (REST_FADE_SEC * 1000) : 1;
+        if (restFade && fadeP < 0) {
+          // waiting for a still-scheduled ramp to finish before fading
+        } else if (restFade && fadeP < 1) {
+          const fadeGain = restFade.fromGain * (1 - fadeP);
+          voice.setGain(fadeGain, CUSTOM_PITCH_UPDATE_INTERVAL_MS / 1000);
+          if (SONIFICATION_DEBUG_LOGGING) console.log('[sonification:fade]', 'at=' + nowMs, 'gain=' + fadeGain.toFixed(3));
+          lastSent.gain = fadeGain;
+          customGainLastPushMs = nowMs;
+          customGainPushCount += 1;
+        } else if (gain !== lastSent.gain) {
+          if (SONIFICATION_DEBUG_LOGGING) console.log('[sonification:rest]', 'at=' + nowMs, 'pendingGainRampSec=' + (voice.gainRampEndTime - voice.ctx.currentTime).toFixed(2));
+          voice.stopHard(voice.ctx.currentTime);
+          lastSent.gain = gain;
+          restFade = null;
+          restSavedLevel = null; // fully silent: tremor returning starts from silence again
+          customGainLastPushMs = nowMs;
+          customGainPushCount += 1; // see the counters' comment above
+        }
+        // Pitch and brightness are held while resting/fading (pushed again
+        // once tremor returns), so the tone doesn't slide as it fades.
+        return;
       }
     } else if (Math.abs(gain - lastSent.gain) > GAIN_EPSILON) {
       const gainRampSec = customRampSec(nowMs, customGainLastPushMs);
@@ -1211,7 +1334,10 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
     // the pitch MAPPING curve, unrelated to the SEVENTH follow-up's linear
     // vs exponential RAMP SCHEDULING fix below — both "exponential" but
     // about different things.)
-    const freq = config.minFreq * Math.pow(config.maxFreq / config.minFreq, customSmoothedLevel);
+    // FORTY-FOURTH follow-up: in frequency mode the pitch comes from the
+    // tremor frequency (middle of the range until the first reading).
+    const pitchNorm = pitchMode === 'frequency' ? freqPitchNorm ?? 0.5 : customSmoothedLevel;
+    const freq = config.minFreq * Math.pow(config.maxFreq / config.minFreq, pitchNorm);
     // TWENTIETH follow-up: FREQ_EPSILON (2Hz) is a fine step in Custom's
     // 200-700Hz range (~0.05-0.17 semitone) but about half a semitone in
     // Cello's 65-130Hz register — slow intensity changes would glide half a
@@ -1223,7 +1349,14 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin)
         ? Math.abs(freq - lastSent.freq) > FREQ_EPSILON
         : !(lastSent.freq > 0) || Math.abs(12 * Math.log2(freq / lastSent.freq)) > PITCH_EPSILON_SEMITONES;
     if (pitchMoved) {
-      const freqRampSec = customRampSec(nowMs, customFreqLastPushMs);
+      // FORTY-FOURTH follow-up: in frequency mode the glide is already
+      // smoothed above (freqPitchNorm), so each push uses a fixed ramp of one
+      // push interval that ends before the next push. The usual
+      // customRampSec() can schedule a 0.3 s ramp after a steady stretch,
+      // which later, shorter ramps can't cancel — it then pulls the pitch
+      // back for a moment (an audible dip when the frequency changes).
+      // Intensity mode keeps its existing timing.
+      const freqRampSec = pitchMode === 'frequency' ? CUSTOM_PITCH_UPDATE_INTERVAL_MS / 1000 : customRampSec(nowMs, customFreqLastPushMs);
       voice.setFrequency(freq, freqRampSec);
       lastSent.freq = freq;
       customFreqLastPushMs = nowMs;
@@ -1300,6 +1433,9 @@ export function silenceAudio() {
   violin?.release();
   lastSent = { freq: 0, gain: -1, bright: -1, intensity: -1 };
   customSmoothedLevel = null;
+  restFade = null;
+  restSavedLevel = null;
+  freqPitchNorm = null;
   lastCustomPitchUpdateTime = 0;
   customGainLastPushMs = 0;
   customBrightLastPushMs = 0;

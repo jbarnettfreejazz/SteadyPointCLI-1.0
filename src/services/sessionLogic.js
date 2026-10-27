@@ -2,7 +2,7 @@ import { Alert } from 'react-native';
 import * as live from '../state/liveSession';
 import { sendCommand } from './ble';
 import { persistSave } from './persistence';
-import { silenceAudio, setActiveVoice, setCustomTonalRange, unmuteAudio } from './audio';
+import { silenceAudio, setActiveVoice, setCustomTonalRange, unmuteAudio, setPitchMode, setPitchRange } from './audio';
 import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
 import { buildSessionRecord, RESUME_WINDOW_MIN } from '../utils/sessionRecord';
@@ -375,6 +375,16 @@ function startCheckpointFor(session, opts) {
   );
 }
 
+// FORTY-FOURTH follow-up: the tremor frequencies that span the voice's pitch
+// range in "Pitch follows: Frequency" — the tremor band when band filtering
+// is on, otherwise 3-14 Hz.
+export function pitchRangeFor(settings) {
+  if (settings?.bandFilterEnabled && settings.tremorBandMaxHz > settings.tremorBandMinHz) {
+    return { minHz: settings.tremorBandMinHz, maxHz: settings.tremorBandMaxHz };
+  }
+  return { minHz: 3, maxHz: 14 };
+}
+
 // Puts the calibration and sonification settings into effect for a session.
 function applySessionSettings(settings) {
   // Fixed for the session unless changed with the Recording screen's "Edit
@@ -401,6 +411,9 @@ function applySessionSettings(settings) {
 // Sonification settings for a session (also used when continuing one).
 function applySoundSettings(settings) {
   setActiveVoice(settings?.sonificationVoice);
+  // FORTY-FOURTH follow-up: "Pitch follows" (Settings > Sonification).
+  const range = pitchRangeFor(settings);
+  setPitchMode(settings?.sonificationMode, range.minHz, range.maxHz);
   // Only meaningful when the "custom" tonal range voice is selected, but
   // cheap/harmless to always set — mirrors setFullScaleG()/setTremorBand()'s
   // "fixed for the whole session" treatment.
@@ -505,6 +518,8 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
 // anything changed.
 export function applyCalibrationDuringSession(patch) {
   const changed = live.applyCalibration(patch);
+  const range = pitchRangeFor(patch); // frequency-driven pitch follows the new band
+  setPitchRange(range.minHz, range.maxHz);
   if (changed && activeSession?.persist) checkpoint.flushCheckpoint();
   return changed;
 }

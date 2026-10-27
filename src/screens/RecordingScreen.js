@@ -6,7 +6,7 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
 import { orbSize, orbRGB, fmt } from '../utils/dsp';
-import { endSession, applyCalibrationDuringSession, noteFeedbackType } from '../services/sessionLogic';
+import { endSession, applyCalibrationDuringSession, noteFeedbackType, pitchRangeFor } from '../services/sessionLogic';
 import { onSessionPersisted } from '../services/sessionCheckpoint';
 import CalibrationEditor from '../components/CalibrationEditor';
 import { setAudioHook, getLiveState } from '../state/liveSession';
@@ -62,7 +62,9 @@ export default function RecordingScreen() {
     audioService.initAudio(); // idempotent — no-ops if already built
     audioService.unmuteAudio();
     audioService.resumeAudio(); // EIGHTEENTH follow-up: un-pause the engine silenceAudio() suspended
-    setAudioHook((rx, ry, rz, level, sr, freqWin) => audioService.updateAudio(rx, ry, rz, level, sr, freqWin));
+    setAudioHook((rx, ry, rz, level, sr, freqWin, pitchFreqHz) =>
+      audioService.updateAudio(rx, ry, rz, level, sr, freqWin, pitchFreqHz),
+    );
     return () => {
       audioService.silenceAudio();
       setAudioHook(null);
@@ -114,6 +116,23 @@ export default function RecordingScreen() {
     applyCalibrationDuringSession(patch);
     setCalibrationOpen(false);
   };
+
+  // FORTY-FIFTH follow-up: in "Pitch follows: Frequency" mode, the number
+  // under the ring shows the frequency that actually drives the pitch
+  // (liveSession pitchFreqHz — the tremorPeakFrequency() reading), with a
+  // bar showing where it sits between the lowest note (band minimum) and
+  // the highest (band maximum). It holds its last value (dimmed) while
+  // there's no tremor, just as the pitch does. Intensity mode keeps the
+  // original dominant-frequency display.
+  const pitchByFrequency = state.settings.sonificationMode === 'frequency';
+  // At rest (no reading, sound faded out) the readout clears to "—" and the
+  // marker disappears, so the screen matches the silence.
+  const shownPitchFreq = typeof live.pitchFreqHz === 'number' ? live.pitchFreqHz : null;
+  const pitchRange = pitchRangeFor(state.settings);
+  const pitchPos =
+    shownPitchFreq == null
+      ? null
+      : Math.max(0, Math.min(1, (shownPitchFreq - pitchRange.minHz) / (pitchRange.maxHz - pitchRange.minHz)));
 
   const handleEnd = () => {
     endSession({ state, actions, navigation, secs: live.elapsed, byTimer: false });
@@ -220,9 +239,34 @@ export default function RecordingScreen() {
           </Pressable>
         )}
 
-        <Text style={{ color: c.tx2, fontSize: 13, marginTop: 4, textAlign: 'center' }}>
-          {live.liveFreqHz > 0 ? `${live.liveFreqHz.toFixed(1)} Hz` : '—'}
-        </Text>
+        {pitchByFrequency ? (
+          <View style={styles.pitchWrap}>
+            <Text style={{ color: c.tx1, fontSize: 15, fontWeight: '600', textAlign: 'center' }}>
+              {shownPitchFreq != null ? `${shownPitchFreq.toFixed(1)} Hz` : '—'}
+            </Text>
+            <Text style={{ color: c.tx3, fontSize: 11, textAlign: 'center', marginBottom: 6 }}>
+              pitch frequency
+            </Text>
+            <View style={[styles.pitchTrack, { backgroundColor: c.bg3 }]}>
+              {pitchPos != null && (
+                <View
+                  style={[
+                    styles.pitchMarker,
+                    { left: `${pitchPos * 100}%`, backgroundColor: c.info },
+                  ]}
+                />
+              )}
+            </View>
+            <View style={styles.pitchLabels}>
+              <Text style={{ color: c.tx3, fontSize: 10 }}>{pitchRange.minHz.toFixed(1)} Hz · low</Text>
+              <Text style={{ color: c.tx3, fontSize: 10 }}>high · {pitchRange.maxHz.toFixed(1)} Hz</Text>
+            </View>
+          </View>
+        ) : (
+          <Text style={{ color: c.tx2, fontSize: 13, marginTop: 4, textAlign: 'center' }}>
+            {live.liveFreqHz > 0 ? `${live.liveFreqHz.toFixed(1)} Hz` : '—'}
+          </Text>
+        )}
 
         <View style={styles.axisRow}>
           {[
@@ -349,6 +393,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalScroll: { padding: 20, paddingBottom: 40 },
+  pitchWrap: { width: '80%', marginTop: 10 },
+  pitchTrack: { height: 6, borderRadius: 3, position: 'relative' },
+  pitchMarker: { position: 'absolute', top: -3, width: 4, height: 12, borderRadius: 2, marginLeft: -2 },
+  pitchLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
   sevLabel: { fontSize: 18, fontWeight: '700' },
   axisRow: { flexDirection: 'row', gap: 16, marginTop: 24, width: '80%' },
   axisItem: { flex: 1, alignItems: 'center' },

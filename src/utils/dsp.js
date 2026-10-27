@@ -444,6 +444,51 @@ export function bandLimitedRms(xs, ys, zs, sr, minHz, maxHz, taperHz = BAND_TAPE
   return Math.sqrt(bandSumSq / n);
 }
 
+// FORTY-FOURTH follow-up: the tremor's frequency for "Pitch follows:
+// Frequency" sonification. Same 2-second slices and preparation as
+// bandLimitedRms() (drift removed, Hann window) so it has no extra lag and
+// slow movement doesn't leak in; the three axes' power spectra are ADDED
+// (one combined spectrum, so the result is a frequency actually present —
+// not an average of three separate peaks), and only [minHz, maxHz] is
+// searched (the tremor band when filtering is on). Zero-padded to twice the
+// next power of two and refined with parabolic interpolation on the log
+// power around the peak, so it moves smoothly rather than in bin-sized
+// steps. Returns the frequency in Hz, or null if there's nothing to find.
+export function tremorPeakFrequency(xs, ys, zs, sr, minHz, maxHz) {
+  const n = Math.min(xs.length, ys.length, zs.length);
+  if (n < 16 || !(maxHz > minHz)) return null;
+  let padN = 1;
+  while (padN < n) padN <<= 1;
+  padN <<= 1;
+  const { w } = hann(n);
+  const power = new Array(padN / 2).fill(0);
+  for (const axis of [xs, ys, zs]) {
+    const shaped = detrend(axis.slice(-n)).map((v, i) => v * w[i]);
+    const re = shaped.concat(new Array(padN - n).fill(0));
+    const im = new Array(padN).fill(0);
+    fft(re, im);
+    for (let k = 1; k < padN / 2; k++) power[k] += re[k] * re[k] + im[k] * im[k];
+  }
+  const binHz = sr / padN;
+  const kLo = Math.max(1, Math.ceil(minHz / binHz));
+  const kHi = Math.min(padN / 2 - 2, Math.floor(maxHz / binHz));
+  let best = -1;
+  for (let k = kLo; k <= kHi; k++) if (best < 0 || power[k] > power[best]) best = k;
+  if (best < 0 || !(power[best] > 0)) return null;
+  let offset = 0;
+  const a = power[best - 1];
+  const b = power[best];
+  const c = power[best + 1];
+  if (a > 0 && c > 0) {
+    const la = Math.log(a);
+    const lb = Math.log(b);
+    const lc = Math.log(c);
+    const denom = la - 2 * lb + lc;
+    if (denom < 0) offset = Math.max(-0.5, Math.min(0.5, (0.5 * (la - lc)) / denom));
+  }
+  return Math.min(maxHz, Math.max(minHz, (best + offset) * binHz));
+}
+
 // Linearly maps value from [srcMin,srcMax] into [dstMin,dstMax], clamping
 // out-of-range input first. Mirrors the reference's map_to_audible().
 export function mapRange(value, srcMin, srcMax, dstMin, dstMax) {

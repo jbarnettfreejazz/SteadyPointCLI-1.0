@@ -5,6 +5,7 @@ import {
   combinedDominantFreq,
   rmsToLevel,
   bandLimitedRms,
+  tremorPeakFrequency,
   DEFAULT_FULL_SCALE_G,
   DEFAULT_NOISE_FLOOR_G,
 } from '../utils/dsp';
@@ -97,6 +98,9 @@ function freshState() {
     tremorLevel: 0,
     displayLevel: 0,
     liveFreqHz: 0,
+    // FORTY-FOURTH follow-up: tremor frequency for "Pitch follows: Frequency"
+    // sonification (see updateLiveMetrics); null when there's no tremor.
+    pitchFreqHz: null,
     liveXpct: 0,
     liveYpct: 0,
     liveZpct: 0,
@@ -389,11 +393,19 @@ export function pushPacket(ax, ay, az) {
       // "Dominant Freq" stat — reused here so the new sonification
       // pitch's FFT uses a consistent sample-rate estimate.
       const sr = state.packetTimes.length > 1 ? state.packetTimes.length / 2 : 50;
-      audioHook(state.recentX, state.recentY, state.recentZ, state.tremorLevel, sr, {
-        x: state.freqWinX,
-        y: state.freqWinY,
-        z: state.freqWinZ,
-      });
+      audioHook(
+        state.recentX,
+        state.recentY,
+        state.recentZ,
+        state.tremorLevel,
+        sr,
+        {
+          x: state.freqWinX,
+          y: state.freqWinY,
+          z: state.freqWinZ,
+        },
+        state.pitchFreqHz, // FORTY-FOURTH follow-up
+      );
     } catch (e) {
       console.warn('audioHook failed:', e.message);
     }
@@ -443,6 +455,21 @@ function updateLiveMetrics() {
     : rmsAll;
   const tremorLevel = rmsToLevel(rms, fullScaleG, noiseFloorG);
   state.tremorLevel = tremorLevel;
+  // FORTY-FOURTH follow-up: the tremor's frequency for frequency-driven
+  // pitch — searched within the tremor band when band filtering is on
+  // (the motion intensity counts), otherwise 1-20 Hz. null at intensity 0
+  // (the sound is fading/silent then and holds its last pitch).
+  state.pitchFreqHz =
+    tremorLevel > 0
+      ? tremorPeakFrequency(
+          state.recentX,
+          state.recentY,
+          state.recentZ,
+          sr,
+          tremorBandActive ? tremorBandMinHz : 1,
+          tremorBandActive ? tremorBandMaxHz : 20,
+        )
+      : null;
   state.sparkBuf = [...state.sparkBuf.slice(-(SPARK_LEN - 1)), tremorLevel];
   state.tremorHistory = state.sparkBuf;
 

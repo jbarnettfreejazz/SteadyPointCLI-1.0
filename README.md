@@ -2702,6 +2702,89 @@ spread energy over roughly ±1 Hz, so the edge can't be perfectly sharp):
 less. Bands from the calibration wizard are unaffected in practice — they
 carry a 1 Hz margin around the measured tremor. Applies to new sessions.
 
+## Forty-third follow-up — sonification fades out at rest instead of cutting off
+
+During a session, when intensity reaches 0 the sound now fades out over
+0.5 s instead of stopping instantly (the instant stop was heard as an abrupt
+cut, e.g. as tremor drifts out of the tremor band). Ending a session still
+stops the sound instantly (`silenceAudio()` unchanged). In `audio.js`:
+
+- The fade is done in steps on the existing throttled pushes (every 50 ms,
+  each a short fixed ramp), finished by the protected `stopHard()` — not one
+  long scheduled ramp, which couldn't be cancelled if tremor came back
+  (see the `cancelScheduledValues()` SIGSEGV note). It starts once any gain
+  ramp still scheduled has finished, so no earlier, longer ramp can pull the
+  volume back up afterwards. Pitch and brightness are held while fading.
+- Tremor returning mid-fade goes straight back to the level from just before
+  the fade; a one-reading dip to 0 is now barely audible (it used to restart
+  the volume from silence).
+- Each voice's `gainRampEndTime` now tracks the LATEST pending ramp end
+  (not just the most recent one's), so `stopHard()`'s stale-ramp guard
+  always covers every ramp still scheduled.
+
+**Feature flag:** `REST_FADE_ENABLED` near the top of `audio.js` (next to
+`SONIFICATION_DEBUG_LOGGING`), set to `true`. Setting it to `false` restores
+the previous behaviour exactly (instant stop at rest, previous ramp
+tracking) — verified sample-for-sample against the previous build.
+
+Checked against a simulated Web Audio engine (voice gain over time): fade
+0.125 → 0.095 → 0.053 → 0.020 → 0 across ~0.55 s, silent with no revival
+afterwards (including when a long ramp was pending), instant at session end.
+
+## Forty-fourth follow-up — "Pitch follows: Intensity / Frequency"
+
+Settings > Sonification has a new **Pitch follows** choice (saved as
+`settings.sonificationMode`, default **Intensity** — today's behaviour for
+everyone until they switch; the main Settings row adds "· pitch follows
+frequency" when on). Volume follows intensity in both modes, as does the
+Custom voice's brightness.
+
+- **Intensity:** unchanged — stronger tremor plays a higher note. Verified
+  sample-for-sample identical to the previous build.
+- **Frequency:** faster tremor plays a higher note. The tremor band (when
+  band filtering is on; otherwise 3–14 Hz) spans the voice's full range —
+  band minimum = lowest note, maximum = highest — with the same exponential
+  (octave-even) curve. The pitch glides smoothly (~0.4 s to settle), holds
+  its last note when there's no tremor, and starts mid-range until the first
+  reading. A mid-session calibration change updates the mapping.
+
+**The frequency reading** (`dsp.js` `tremorPeakFrequency()`, computed with
+every intensity reading in `liveSession.js` and passed to `updateAudio()`):
+same 2-second slices as intensity, drift removed + Hann window, the three
+axes' spectra ADDED into one (so it's a frequency actually present — not an
+average of three separate peaks like the on-screen frequency display), only
+the tremor band searched when filtering is on (1–20 Hz otherwise), and the
+peak refined by interpolation. Synthetic checks: within 0.15 Hz from 3.3 to
+12.4 Hz, unaffected by large slow arm movement and drift, correct with
+tremor on one axis only, changes smoothly as the tremor shifts. The
+on-screen frequency display is unchanged.
+
+In frequency mode each pitch push uses a fixed ramp of one push interval
+(the glide is smoothed before that): the usual ramp timing could schedule a
+0.3 s ramp after a steady stretch that later pushes can't cancel, causing a
+brief audible pitch dip when the frequency changed.
+
+## Forty-fifth follow-up — Recording screen shows the pitch frequency in Frequency mode
+
+With **Pitch follows: Frequency** selected, the Recording screen's frequency
+readout now shows the frequency that is actually driving the pitch (the
+`tremorPeakFrequency()` reading passed to `updateAudio()`), labelled
+"pitch frequency", instead of the general frequency display. Below it, a
+thin bar marks where that frequency sits in the pitch range, with the range
+ends labelled "low" and "high" — the tremor band when band filtering is on,
+3–14 Hz otherwise (`pitchRangeFor()`, the same range the audio uses).
+
+- When there's no tremor reading (rest, sound faded out), the readout
+  clears to "—" and the marker disappears, so the screen matches the
+  silence. (The audio still keeps its last note internally, so the pitch
+  resumes from there when tremor returns.)
+- Before the first reading of a session it shows "—" and no marker.
+- A frequency outside the range pins the marker to the end of the bar
+  (the pitch is clamped the same way).
+- Intensity mode is unchanged.
+
+Changed: `src/screens/RecordingScreen.js`.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop
