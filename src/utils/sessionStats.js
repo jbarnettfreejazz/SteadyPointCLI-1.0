@@ -42,22 +42,39 @@ export function sessionInsight(reduction) {
 }
 
 // Ported from the day-grouping logic in renderSessionHistory() — groups
-// past (non-today) sessions by date, labeling "Yesterday" specially and
-// other days by weekday name. Returns [{ label, sessions }], most recent
-// day first (matching allSessions being newest-first already).
-export function groupPastSessionsByDay(allSessions) {
+// past (non-today) sessions by date, labeling "Yesterday" specially, other
+// days of the last week by weekday name, and older days by date
+// ("Tue, Oct 13"; the year is added when it isn't this year). Returns
+// [{ label, dateKey, sessions }], most recent day first (allSessions is
+// already newest-first).
+//
+// FORTY-SIXTH follow-up: withinDays limits the result to the last N days
+// counting today (Session History's "This week" = 7: today and the six days
+// before it — the same 7 days as Home's daily bars). Omit it for all days.
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+export function groupPastSessionsByDay(allSessions, { withinDays = null } = {}) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const yesterdayKey = new Date(today.getTime() - DAY_MS).toISOString().slice(0, 10);
+  const weekStartKey = new Date(today.getTime() - 6 * DAY_MS).toISOString().slice(0, 10);
+  const cutoffKey = withinDays ? new Date(today.getTime() - (withinDays - 1) * DAY_MS).toISOString().slice(0, 10) : null;
   const tKey = todayKey();
 
-  const past = allSessions.filter((s) => s.dateKey !== tKey);
+  // dateKeys are YYYY-MM-DD, so they compare correctly as strings.
+  const past = allSessions.filter((s) => s.dateKey !== tKey && (!cutoffKey || s.dateKey >= cutoffKey));
   const groups = [];
   const groupIndex = {};
 
   for (const s of past) {
     const d = new Date(s.dateKey + 'T00:00:00');
-    const label = s.dateKey === yesterdayKey ? 'Yesterday' : DAY_LABELS[d.getDay()];
+    let label;
+    if (s.dateKey === yesterdayKey) label = 'Yesterday';
+    else if (s.dateKey >= weekStartKey) label = DAY_LABELS[d.getDay()];
+    else {
+      label = `${DAY_LABELS[d.getDay()]}, ${MONTH_LABELS[d.getMonth()]} ${d.getDate()}`;
+      if (d.getFullYear() !== today.getFullYear()) label += `, ${d.getFullYear()}`;
+    }
     if (groupIndex[s.dateKey] === undefined) {
       groupIndex[s.dateKey] = groups.length;
       groups.push({ label, dateKey: s.dateKey, sessions: [] });

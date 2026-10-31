@@ -455,6 +455,19 @@ export function bandLimitedRms(xs, ys, zs, sr, minHz, maxHz, taperHz = BAND_TAPE
 // power around the peak, so it moves smoothly rather than in bin-sized
 // steps. Returns the frequency in Hz, or null if there's nothing to find.
 export function tremorPeakFrequency(xs, ys, zs, sr, minHz, maxHz) {
+  const info = tremorPeakInfo(xs, ys, zs, sr, minHz, maxHz);
+  return info ? info.hz : null;
+}
+
+// FIFTIETH follow-up: same as tremorPeakFrequency(), plus edgeSpill —
+// true when the strongest point inside [minHz, maxHz] sits on the edge of
+// the range with the spectrum still RISING beyond it. That means the real
+// peak is outside the range and what's inside is only its spill-over (a
+// 2-second slice can't separate frequencies sharply), not a tremor of its
+// own. A genuine tremor right at the edge is still a peak (the spectrum
+// falls on the far side), so it's not flagged. Returns { hz, edgeSpill } or
+// null.
+export function tremorPeakInfo(xs, ys, zs, sr, minHz, maxHz) {
   const n = Math.min(xs.length, ys.length, zs.length);
   if (n < 16 || !(maxHz > minHz)) return null;
   let padN = 1;
@@ -486,7 +499,10 @@ export function tremorPeakFrequency(xs, ys, zs, sr, minHz, maxHz) {
     const denom = la - 2 * lb + lc;
     if (denom < 0) offset = Math.max(-0.5, Math.min(0.5, (0.5 * (la - lc)) / denom));
   }
-  return Math.min(maxHz, Math.max(minHz, (best + offset) * binHz));
+  const edgeSpill =
+    (best === kLo && kLo - 1 >= 1 && power[kLo - 1] > power[best]) ||
+    (best === kHi && kHi + 1 < padN / 2 && power[kHi + 1] > power[best]);
+  return { hz: Math.min(maxHz, Math.max(minHz, (best + offset) * binHz)), edgeSpill };
 }
 
 // Linearly maps value from [srcMin,srcMax] into [dstMin,dstMax], clamping

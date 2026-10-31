@@ -1,5 +1,118 @@
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
+index 38da2a5..fa97ac1 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
+@@ -40,14 +40,19 @@ void AudioParam::setValue(float value) {
+ }
+ 
+ float AudioParam::getValueAtTime(double time) {
+-  if (endTime_ < time && !eventsQueue_.empty()) {
+-    auto event = eventsQueue_.front();
+-    startTime_ = event.getStartTime();
+-    endTime_ = event.getEndTime();
+-    startValue_ = event.getStartValue();
+-    endValue_ = event.getEndValue();
+-    calculateValue_ = event.getCalculateValue();
+-    eventsQueue_.pop_front();
++  {
++    // SteadyPoint patch: never block the audio thread — if the JS thread is
++    // scheduling right now, take the next event on a later sample instead.
++    std::unique_lock<std::mutex> lock(queueMutex_, std::try_to_lock);
++    if (lock.owns_lock() && endTime_ < time && !eventsQueue_.empty()) {
++      auto event = eventsQueue_.front();
++      startTime_ = event.getStartTime();
++      endTime_ = event.getEndTime();
++      startValue_ = event.getStartValue();
++      endValue_ = event.getEndValue();
++      calculateValue_ = event.getCalculateValue();
++      eventsQueue_.pop_front();
++    }
+   }
+ 
+   setValue(calculateValue_(startTime_, endTime_, startValue_, endValue_, time));
+@@ -56,6 +61,7 @@ float AudioParam::getValueAtTime(double time) {
+ }
+ 
+ void AudioParam::setValueAtTime(float value, double startTime) {
++  std::lock_guard<std::mutex> lock(queueMutex_); // SteadyPoint patch
+   if (startTime <= getQueueEndTime()) {
+     return;
+   }
+@@ -83,6 +89,7 @@ void AudioParam::setValueAtTime(float value, double startTime) {
+ }
+ 
+ void AudioParam::linearRampToValueAtTime(float value, double endTime) {
++  std::lock_guard<std::mutex> lock(queueMutex_); // SteadyPoint patch
+   if (endTime <= getQueueEndTime()) {
+     return;
+   }
+@@ -116,6 +123,7 @@ void AudioParam::linearRampToValueAtTime(float value, double endTime) {
+ }
+ 
+ void AudioParam::exponentialRampToValueAtTime(float value, double endTime) {
++  std::lock_guard<std::mutex> lock(queueMutex_); // SteadyPoint patch
+   if (endTime <= getQueueEndTime()) {
+     return;
+   }
+@@ -153,6 +161,7 @@ void AudioParam::setTargetAtTime(
+     float target,
+     double startTime,
+     double timeConstant) {
++  std::lock_guard<std::mutex> lock(queueMutex_); // SteadyPoint patch
+   if (startTime <= getQueueEndTime()) {
+     return;
+   }
+@@ -184,6 +193,7 @@ void AudioParam::setValueCurveAtTime(
+     size_t length,
+     double startTime,
+     double duration) {
++  std::lock_guard<std::mutex> lock(queueMutex_); // SteadyPoint patch
+   if (startTime <= getQueueEndTime()) {
+     return;
+   }
+@@ -224,6 +234,7 @@ void AudioParam::setValueCurveAtTime(
+ }
+ 
+ void AudioParam::cancelScheduledValues(double cancelTime) {
++  std::lock_guard<std::mutex> lock(queueMutex_); // SteadyPoint patch
+   auto it = eventsQueue_.rbegin();
+   while (it->getEndTime() >= cancelTime) {
+     if (it->getStartTime() >= cancelTime ||
+@@ -236,6 +247,7 @@ void AudioParam::cancelScheduledValues(double cancelTime) {
+ }
+ 
+ void AudioParam::cancelAndHoldAtTime(double cancelTime) {
++  std::lock_guard<std::mutex> lock(queueMutex_); // SteadyPoint patch
+   auto it = eventsQueue_.rbegin();
+   while (it->getEndTime() >= cancelTime) {
+     if (it->getStartTime() >= cancelTime) {
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.h b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.h
+index 2d562f8..5d931f7 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.h
+@@ -4,6 +4,7 @@
+ #include <audioapi/core/types/ParamChangeEventType.h>
+ 
+ #include <deque>
++#include <mutex>
+ #include <memory>
+ #include <vector>
+ #include <cstddef>
+@@ -42,6 +43,12 @@ class AudioParam {
+   float minValue_;
+   float maxValue_;
+   std::deque<ParamChangeEvent> eventsQueue_;
++  // SteadyPoint patch: eventsQueue_ is written by the JS thread (the
++  // scheduling methods) and popped by the audio thread (getValueAtTime)
++  // with no synchronisation, which can crash (`deque::back called on an
++  // empty deque` / iterator faults). The JS-thread methods lock this; the
++  // audio thread only try-locks, so it never waits.
++  std::mutex queueMutex_;
+ 
+   double startTime_;
+   double endTime_;
 diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/Constants.h b/node_modules/react-native-audio-api/common/cpp/audioapi/core/Constants.h
-index 1111111..2222222 100644
+index 5083067..9e352b5 100644
 --- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/Constants.h
 +++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/Constants.h
 @@ -1,6 +1,7 @@
@@ -10,3 +123,135 @@ index 1111111..2222222 100644
  #include <limits>
  
  // https://webaudio.github.io/web-audio-api/
+diff --git a/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.h b/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.h
+index 592864f..ccb499c 100644
+--- a/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.h
++++ b/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.h
+@@ -38,4 +38,7 @@ typedef void (^RenderAudioBlock)(AudioBufferList *outputBuffer, int numFrames);
+ 
+ - (void)connectAudioEngine;
+ 
++// SteadyPoint patch: route-change / interruption recovery (see AudioPlayer.m)
++- (void)registerSteadyPointObservers;
++
+ @end
+diff --git a/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.m b/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.m
+index ec67e5e..57568e8 100644
+--- a/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.m
++++ b/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.m
+@@ -28,6 +28,8 @@
+ 
+     _format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:self.sampleRate channels:2];
+     _sourceNode = [[AVAudioSourceNode alloc] initWithFormat:self.format renderBlock:self.renderBlock];
++
++    [self registerSteadyPointObservers]; // SteadyPoint patch
+   }
+ 
+   return self;
+@@ -60,6 +62,8 @@
+     };
+ 
+     _sourceNode = [[AVAudioSourceNode alloc] initWithFormat:self.format renderBlock:self.renderBlock];
++
++    [self registerSteadyPointObservers]; // SteadyPoint patch
+   }
+ 
+   return self;
+@@ -110,6 +114,7 @@
+ 
+ - (void)cleanup
+ {
++  [[NSNotificationCenter defaultCenter] removeObserver:self]; // SteadyPoint patch
+   self.audioEngine = nil;
+   self.audioSession = nil;
+   self.renderAudio = nil;
+@@ -190,4 +195,89 @@
+   }
+ }
+ 
++// ─────────────────────────────────────────────────────────────────────
++// SteadyPoint patch (Nineteenth follow-up): recover from audio route
++// changes and interruptions. Upstream 0.4.18 registers no observers, so:
++//  - Switching output (e.g. connecting a Bluetooth speaker mid-session)
++//    can change the hardware sample rate / channel count. AVAudioEngine
++//    then STOPS ITSELF and posts AVAudioEngineConfigurationChangeNotification;
++//    nothing restarted it, so sonification went silent until the app
++//    rebuilt/resumed the engine (confirmed on-device).
++//  - A phone call / Siri / alarm interruption likewise stops the engine,
++//    and nothing restarted it when the interruption ended.
++// Both handlers restart only if isRunning is true, i.e. only when the JS
++// side currently wants sound (suspend sets it false between sessions, so
++// a route change while SteadyPoint is idle won't wake the engine).
++// ─────────────────────────────────────────────────────────────────────
++- (void)registerSteadyPointObservers
++{
++  NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
++  [center addObserver:self
++             selector:@selector(steadyPointEngineConfigurationChanged:)
++                 name:AVAudioEngineConfigurationChangeNotification
++               object:self.audioEngine];
++  [center addObserver:self
++             selector:@selector(steadyPointSessionInterrupted:)
++                 name:AVAudioSessionInterruptionNotification
++               object:[AVAudioSession sharedInstance]];
++}
++
++- (void)steadyPointRestartEngineWithReason:(NSString *)reason
++{
++  dispatch_async(dispatch_get_main_queue(), ^{
++    if (!self.isRunning || self.audioEngine == nil) {
++      NSLog(@"[SteadyPoint audio] %@: engine not wanted (suspended) - not restarting", reason);
++      return;
++    }
++
++    @try {
++      // Per Apple: after a configuration change, nodes stay attached and
++      // connected with their PREVIOUS formats. The source node's own format
++      // is fixed at init and the main mixer sample-rate-converts it, so only
++      // the mixer -> output link needs re-establishing at the new hardware
++      // format (e.g. 48kHz phone speaker -> 44.1kHz Bluetooth speaker).
++      AVAudioFormat *hwFormat = [self.audioEngine.outputNode outputFormatForBus:0];
++      if (hwFormat.sampleRate > 0 && hwFormat.channelCount > 0) {
++        [self.audioEngine connect:self.audioEngine.mainMixerNode to:self.audioEngine.outputNode format:hwFormat];
++      }
++    } @catch (NSException *exception) {
++      NSLog(@"[SteadyPoint audio] %@: reconnect failed: %@", reason, exception.reason);
++    }
++
++    NSError *sessionError = nil;
++    [[AVAudioSession sharedInstance] setActive:true error:&sessionError];
++    if (sessionError != nil) {
++      NSLog(@"[SteadyPoint audio] %@: session activate error: %@", reason, [sessionError localizedDescription]);
++    }
++
++    if (![self.audioEngine isRunning]) {
++      NSError *error = nil;
++      if ([self.audioEngine startAndReturnError:&error]) {
++        NSLog(@"[SteadyPoint audio] %@: engine restarted", reason);
++      } else {
++        NSLog(@"[SteadyPoint audio] %@: engine restart FAILED: %@", reason, [error localizedDescription]);
++      }
++    } else {
++      NSLog(@"[SteadyPoint audio] %@: engine already running", reason);
++    }
++  });
++}
++
++- (void)steadyPointEngineConfigurationChanged:(NSNotification *)notification
++{
++  NSLog(@"[SteadyPoint audio] AVAudioEngineConfigurationChange received");
++  [self steadyPointRestartEngineWithReason:@"configuration change"];
++}
++
++- (void)steadyPointSessionInterrupted:(NSNotification *)notification
++{
++  NSUInteger type = [notification.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
++  if (type == AVAudioSessionInterruptionTypeBegan) {
++    NSLog(@"[SteadyPoint audio] interruption began");
++    return; // the system has already stopped the engine
++  }
++  NSLog(@"[SteadyPoint audio] interruption ended");
++  [self steadyPointRestartEngineWithReason:@"interruption ended"];
++}
++
+ @end

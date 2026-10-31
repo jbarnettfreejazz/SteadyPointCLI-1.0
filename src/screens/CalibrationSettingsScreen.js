@@ -6,7 +6,7 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { shareCalibrationLog } from '../services/calibrationLogger';
 import { dateFromIso } from '../utils/analyticsStats';
-import { CALIBRATION_FIELDS, CALIBRATION_DEFAULTS, formatValue } from '../utils/calibrationLimits';
+import { CALIBRATION_FIELDS, CALIBRATION_DEFAULTS, formatValue, formatCeiling } from '../utils/calibrationLimits';
 import CalibrationEditor from '../components/CalibrationEditor';
 
 // THIRTY-FIFTH follow-up: Settings > Calibration sub-page (was the "Tremor
@@ -139,6 +139,20 @@ export default function CalibrationSettingsScreen() {
                   {settings.bandFilterEnabled
                     ? 'Intensity counts only motion within the tremor band, filtering out slower, voluntary movement.'
                     : 'Intensity counts motion at all frequencies. The tremor band isn’t applied.'}
+                </Text>
+              </View>
+              {/* FIFTIETH follow-up: optional upper intensity limit (sound only) */}
+              <View style={[styles.fieldBlock, { borderTopWidth: 1, borderColor: c.bd3 }]}>
+                <View style={styles.fieldHeader}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: c.tx1, flex: 1 }}>Upper limit</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: settings.intensityCeilingG ? c.tx1 : c.tx3 }}>
+                    {formatCeiling(settings.intensityCeilingG)}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 12, color: c.tx3, lineHeight: 17, marginTop: 2 }}>
+                  {settings.intensityCeilingG
+                    ? 'Sound goes silent when intensity is above this. Doesn’t change readings.'
+                    : 'Off: intensity above full scale plays at full volume.'}
                 </Text>
               </View>
               <Pressable

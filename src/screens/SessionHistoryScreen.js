@@ -15,7 +15,10 @@ export default function SessionHistoryScreen() {
   const scale = displayScale(state.settings); // THIRTIETH follow-up — current scale
 
   const todayLive = getTodaySessions(allSessions);
-  const pastGroups = groupPastSessionsByDay(allSessions);
+  // FORTY-SIXTH follow-up: "This week" now actually filters — today plus
+  // the six days before it; "All sessions" shows everything.
+  const thisWeek = state.histFilter !== 'all';
+  const pastGroups = groupPastSessionsByDay(allSessions, { withinDays: thisWeek ? 7 : null });
 
   const openSession = (session) => {
     actions.setSelectedSession(session);
@@ -32,10 +35,7 @@ export default function SessionHistoryScreen() {
 
         <Text style={[styles.h1, { color: c.tx1 }]}>Session History</Text>
 
-        {/* Tab bar — matches the original's "This week" / "All sessions" tabs.
-            Note: in the original HTML, these tabs don't actually filter the
-            list below (histFilter only affects which tab looks active) —
-            preserved as-is here to match the original's real behavior. */}
+        {/* Tab bar — "This week" (last 7 days, the default) / "All sessions". */}
         <View style={[styles.tabBar, { backgroundColor: c.bg2 }]}>
           <Pressable
             onPress={() => actions.setHistFilter('week')}
@@ -70,7 +70,9 @@ export default function SessionHistoryScreen() {
         ))}
 
         {todayLive.length === 0 && pastGroups.length === 0 && (
-          <Text style={{ fontSize: 13, color: c.tx3, paddingVertical: 8 }}>No past sessions recorded</Text>
+          <Text style={{ fontSize: 13, color: c.tx3, paddingVertical: 8 }}>
+            {thisWeek ? 'No sessions in the last 7 days' : 'No past sessions recorded'}
+          </Text>
         )}
       </ScrollView>
     </SafeAreaView>

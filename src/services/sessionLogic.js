@@ -414,6 +414,8 @@ function applySoundSettings(settings) {
   // FORTY-FOURTH follow-up: "Pitch follows" (Settings > Sonification).
   const range = pitchRangeFor(settings);
   setPitchMode(settings?.sonificationMode, range.minHz, range.maxHz);
+  // FIFTIETH follow-up: optional upper intensity limit (sound only).
+  live.setIntensityCeilingG(settings?.intensityCeilingG);
   // Only meaningful when the "custom" tonal range voice is selected, but
   // cheap/harmless to always set — mirrors setFullScaleG()/setTremorBand()'s
   // "fixed for the whole session" treatment.
@@ -520,6 +522,7 @@ export function applyCalibrationDuringSession(patch) {
   const changed = live.applyCalibration(patch);
   const range = pitchRangeFor(patch); // frequency-driven pitch follows the new band
   setPitchRange(range.minHz, range.maxHz);
+  if ('intensityCeilingG' in patch) live.setIntensityCeilingG(patch.intensityCeilingG); // FIFTIETH follow-up
   if (changed && activeSession?.persist) checkpoint.flushCheckpoint();
   return changed;
 }

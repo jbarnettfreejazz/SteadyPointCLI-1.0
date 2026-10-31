@@ -9,6 +9,7 @@ import { orbSize, orbRGB, fmt } from '../utils/dsp';
 import { endSession, applyCalibrationDuringSession, noteFeedbackType, pitchRangeFor } from '../services/sessionLogic';
 import { onSessionPersisted } from '../services/sessionCheckpoint';
 import CalibrationEditor from '../components/CalibrationEditor';
+import TremorMap from '../components/TremorMap';
 import { setAudioHook, getLiveState } from '../state/liveSession';
 import * as audioService from '../services/audio';
 import { playGuideTrack, stopGuideTrack } from '../services/guideTrackPlayer';
@@ -18,6 +19,13 @@ import { useKeepAwake } from '@sayem314/react-native-keep-awake';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SPARK_CARD_WIDTH = SCREEN_WIDTH * 0.9;
 const SPARK_WIDTH = SPARK_CARD_WIDTH - 24; // minus sparkCard's horizontal padding (12 each side)
+
+// FORTY-SEVENTH follow-up: g value next to the intensity %, e.g. ".70g"
+// (3 decimals below 0.1 g, e.g. ".045g").
+function formatG(g) {
+  const v = typeof g === 'number' && isFinite(g) && g > 0 ? g : 0;
+  return `${v.toFixed(v < 0.1 ? 3 : 2).replace(/^0(?=\.)/, '')}g`;
+}
 
 export default function RecordingScreen() {
   const c = useTheme();
@@ -121,18 +129,73 @@ export default function RecordingScreen() {
   // under the ring shows the frequency that actually drives the pitch
   // (liveSession pitchFreqHz — the tremorPeakFrequency() reading), with a
   // bar showing where it sits between the lowest note (band minimum) and
-  // the highest (band maximum). It holds its last value (dimmed) while
-  // there's no tremor, just as the pitch does. Intensity mode keeps the
-  // original dominant-frequency display.
+  // the highest (band maximum). Since the FORTY-NINTH follow-up the same
+  // text and bar also show in Intensity mode (labelled just "frequency").
   const pitchByFrequency = state.settings.sonificationMode === 'frequency';
   // At rest (no reading, sound faded out) the readout clears to "—" and the
   // marker disappears, so the screen matches the silence.
-  const shownPitchFreq = typeof live.pitchFreqHz === 'number' ? live.pitchFreqHz : null;
+  //
+  // FORTY-SEVENTH follow-up: the text says whether the tremor is in the
+  // band (the pitch range — the tremor band, or 3–14 Hz with band
+  // filtering off), using actualFreqHz, the strongest frequency in all
+  // motion:
+  //   in the band      → "in-band 4.7 Hz"
+  //   outside the band → "actual: 3.5 Hz, in-band: --"
+  //   actual and in-band differ → "actual: 3.5 Hz, in-band: 4.1 Hz"
+  //                      (see FORTY-EIGHTH follow-up below)
+  // The marker shows the in-band frequency, and is hidden when there's none.
   const pitchRange = pitchRangeFor(state.settings);
-  const pitchPos =
-    shownPitchFreq == null
-      ? null
-      : Math.max(0, Math.min(1, (shownPitchFreq - pitchRange.minHz) / (pitchRange.maxHz - pitchRange.minHz)));
+  const inRange = (f) => f >= pitchRange.minHz - 0.05 && f <= pitchRange.maxHz + 0.05;
+  const actualFreq = typeof live.actualFreqHz === 'number' ? live.actualFreqHz : null;
+  const pitchFreq = typeof live.pitchFreqHz === 'number' && inRange(live.pitchFreqHz) ? live.pitchFreqHz : null;
+  const actualInBand = actualFreq != null && inRange(actualFreq);
+  const inBandFreq = actualInBand ? pitchFreq ?? actualFreq : pitchFreq;
+  // FORTY-EIGHTH follow-up: "actual" is shown whenever it differs from the
+  // in-band reading (as displayed, to 0.1 Hz) — also when both are in the
+  // band — not only when the actual frequency is outside the band.
+  //
+  // FIFTIETH follow-up: the frequency text now sits under the tremor map
+  // (components/TremorMap.js), which replaces the bar, and adds the g and,
+  // with band filtering on, how far the actual frequency is from the band:
+  //   same   → "in-band 4.7 Hz (.12g)"
+  //   differ → "actual: 3.5 Hz (.20g) · 0.5 Hz below band"
+  //            "in-band: --"   or   "in-band: 4.1 Hz (.012g)"
+  // plus "· silent above upper limit" while the upper limit mutes the sound.
+  const fmtHz = (f) => f.toFixed(1);
+  const bandOn =
+    !!state.settings.bandFilterEnabled && state.settings.tremorBandMaxHz > state.settings.tremorBandMinHz;
+  const showBoth = actualFreq != null && (inBandFreq == null || fmtHz(actualFreq) !== fmtHz(inBandFreq));
+  const ceilingNote = live.mutedReason === 'ceiling' ? ' · silent above upper limit' : '';
+  let actualLine = null;
+  let inBandLine = '—';
+  if (showBoth) {
+    let away = '';
+    if (bandOn && actualFreq < state.settings.tremorBandMinHz) {
+      away = ` · ${fmtHz(state.settings.tremorBandMinHz - actualFreq)} Hz below band`;
+    } else if (bandOn && actualFreq > state.settings.tremorBandMaxHz) {
+      away = ` · ${fmtHz(actualFreq - state.settings.tremorBandMaxHz)} Hz above band`;
+    }
+    actualLine = `actual: ${fmtHz(actualFreq)} Hz (${formatG(live.liveRmsAllG)})${away}`;
+    inBandLine = `in-band: ${inBandFreq != null ? `${fmtHz(inBandFreq)} Hz (${formatG(live.liveRmsG)})` : '--'}${
+      inBandFreq != null ? ceilingNote : ''
+    }`;
+  } else if (inBandFreq != null) {
+    inBandLine = `in-band ${fmtHz(inBandFreq)} Hz (${formatG(live.liveRmsG)})${ceilingNote}`;
+  }
+  const mapWindow = {
+    bandOn,
+    minHz: state.settings.tremorBandMinHz ?? 3,
+    maxHz: state.settings.tremorBandMaxHz ?? 14,
+    noiseFloorG: typeof state.settings.noiseFloorG === 'number' ? state.settings.noiseFloorG : 0.006,
+    fullScaleG: typeof state.settings.fullScaleG === 'number' ? state.settings.fullScaleG : 0.35,
+    ceilingG: typeof state.settings.intensityCeilingG === 'number' && state.settings.intensityCeilingG > 0 ? state.settings.intensityCeilingG : null,
+  };
+  const mapNow = {
+    af: actualFreq,
+    ag: live.liveRmsAllG,
+    pf: typeof live.pitchFreqHz === 'number' ? live.pitchFreqHz : null,
+    pg: live.liveRmsG,
+  };
 
   const handleEnd = () => {
     endSession({ state, actions, navigation, secs: live.elapsed, byTimer: false });
@@ -216,7 +279,9 @@ export default function RecordingScreen() {
 
         <View style={styles.sevRow}>
           <Text style={[styles.sevLabel, { color: severityColor }]}>{live.liveSev}</Text>
-          <Text style={{ color: c.tx3, fontSize: 12 }}>{live.displayLevel}% intensity</Text>
+          <Text style={{ color: c.tx3, fontSize: 12 }}>
+            {live.displayLevel}% ({formatG(live.displayG)}) intensity
+          </Text>
         </View>
 
         {isContinuous && (
@@ -239,34 +304,21 @@ export default function RecordingScreen() {
           </Pressable>
         )}
 
-        {pitchByFrequency ? (
-          <View style={styles.pitchWrap}>
-            <Text style={{ color: c.tx1, fontSize: 15, fontWeight: '600', textAlign: 'center' }}>
-              {shownPitchFreq != null ? `${shownPitchFreq.toFixed(1)} Hz` : '—'}
-            </Text>
-            <Text style={{ color: c.tx3, fontSize: 11, textAlign: 'center', marginBottom: 6 }}>
-              pitch frequency
-            </Text>
-            <View style={[styles.pitchTrack, { backgroundColor: c.bg3 }]}>
-              {pitchPos != null && (
-                <View
-                  style={[
-                    styles.pitchMarker,
-                    { left: `${pitchPos * 100}%`, backgroundColor: c.info },
-                  ]}
-                />
-              )}
-            </View>
-            <View style={styles.pitchLabels}>
-              <Text style={{ color: c.tx3, fontSize: 10 }}>{pitchRange.minHz.toFixed(1)} Hz · low</Text>
-              <Text style={{ color: c.tx3, fontSize: 10 }}>high · {pitchRange.maxHz.toFixed(1)} Hz</Text>
-            </View>
-          </View>
-        ) : (
-          <Text style={{ color: c.tx2, fontSize: 13, marginTop: 4, textAlign: 'center' }}>
-            {live.liveFreqHz > 0 ? `${live.liveFreqHz.toFixed(1)} Hz` : '—'}
+        {/* FIFTIETH follow-up: tremor map (both modes, with or without
+            sound) — the settings box, the in-band and actual readings, and
+            the last minute's trail — with the numbers underneath. */}
+        <View style={styles.mapWrap}>
+          <TremorMap trail={live.mapTrail || []} current={mapNow} window={mapWindow} c={c} />
+          {actualLine && (
+            <Text style={{ color: c.tx1, fontSize: 14, fontWeight: '600', textAlign: 'center', marginTop: 6 }}>{actualLine}</Text>
+          )}
+          <Text style={{ color: c.tx1, fontSize: 14, fontWeight: '600', textAlign: 'center', marginTop: actualLine ? 2 : 6 }}>
+            {inBandLine}
           </Text>
-        )}
+          {pitchByFrequency && (
+            <Text style={{ color: c.tx3, fontSize: 11, textAlign: 'center' }}>pitch follows the in-band frequency</Text>
+          )}
+        </View>
 
         <View style={styles.axisRow}>
           {[
@@ -393,10 +445,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalScroll: { padding: 20, paddingBottom: 40 },
-  pitchWrap: { width: '80%', marginTop: 10 },
-  pitchTrack: { height: 6, borderRadius: 3, position: 'relative' },
-  pitchMarker: { position: 'absolute', top: -3, width: 4, height: 12, borderRadius: 2, marginLeft: -2 },
-  pitchLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  mapWrap: { width: '94%', marginTop: 10 },
   sevLabel: { fontSize: 18, fontWeight: '700' },
   axisRow: { flexDirection: 'row', gap: 16, marginTop: 24, width: '80%' },
   axisItem: { flex: 1, alignItems: 'center' },

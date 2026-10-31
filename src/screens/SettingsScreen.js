@@ -49,9 +49,9 @@ export default function SettingsScreen() {
   const { state } = useStore();
   const s = state.settings;
 
-  const calibrationSummary = `${formatValue('fullScaleG', s.fullScaleG)} g full scale · band filtering ${
-    s.bandFilterEnabled ? 'on' : 'off'
-  }`;
+  const calibrationSummary =
+    `${formatValue('fullScaleG', s.fullScaleG)} g full scale · band filtering ${s.bandFilterEnabled ? 'on' : 'off'}` +
+    (s.intensityCeilingG ? ` · upper limit ${formatValue('fullScaleG', s.intensityCeilingG)} g` : ''); // FIFTIETH follow-up
   const voice = VOICE_OPTIONS.find((v) => v.key === s.sonificationVoice) || VOICE_OPTIONS[0];
   const sonificationSummary =
     (voice.key === 'custom'

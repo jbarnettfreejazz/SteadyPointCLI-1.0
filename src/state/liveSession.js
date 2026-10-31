@@ -6,6 +6,7 @@ import {
   rmsToLevel,
   bandLimitedRms,
   tremorPeakFrequency,
+  tremorPeakInfo,
   DEFAULT_FULL_SCALE_G,
   DEFAULT_NOISE_FLOOR_G,
 } from '../utils/dsp';
@@ -101,6 +102,25 @@ function freshState() {
     // FORTY-FOURTH follow-up: tremor frequency for "Pitch follows: Frequency"
     // sonification (see updateLiveMetrics); null when there's no tremor.
     pitchFreqHz: null,
+    // FORTY-SEVENTH follow-up (Recording screen text):
+    // actualFreqHz — strongest frequency in ALL motion (1-20 Hz, ignoring
+    // the band), null when all motion is below the noise floor; lets the
+    // screen say when the tremor is outside the band.
+    // displayG — the motion (g) behind the displayed intensity %.
+    actualFreqHz: null,
+    displayG: 0,
+    // FIFTIETH follow-up (tremor map + sound gating):
+    // liveRmsG / liveRmsAllG — this reading's in-band (what intensity is
+    // scored from) and all-motion g; soundLevel — the level actually sent
+    // to the sound (tremorLevel, or 0 while muted); mutedReason — null |
+    // 'edge' (only spill-over from outside the band) | 'ceiling' (above the
+    // upper intensity limit); mapTrail — the last MAP_TRAIL_SEC of readings
+    // [{ t (ms), af, ag, pf, pg }] for the Recording screen's tremor map.
+    liveRmsG: 0,
+    liveRmsAllG: 0,
+    soundLevel: 0,
+    mutedReason: null,
+    mapTrail: [],
     liveXpct: 0,
     liveYpct: 0,
     liveZpct: 0,
@@ -174,6 +194,26 @@ export function setTremorBand(minHz, maxHz, active = false) {
 export function getTremorBand() {
   return { tremorBandMinHz, tremorBandMaxHz, tremorBandActive };
 }
+
+// FIFTIETH follow-up: optional upper intensity limit (g) for the SOUND
+// only — above it the sound goes silent, so a session can listen for a
+// middle range of intensity. null = off (above full scale just stays at
+// full volume). Readings and saved sessions are unaffected.
+let intensityCeilingG = null;
+export function setIntensityCeilingG(value) {
+  intensityCeilingG = typeof value === 'number' && value > 0 ? value : null;
+}
+export function getIntensityCeilingG() {
+  return intensityCeilingG;
+}
+
+// FIFTIETH follow-up: silence outside the band is strict — with band
+// filtering on, a reading whose in-band part is only spill-over from a
+// tremor outside the band (see dsp.js tremorPeakInfo) sends no sound.
+export const STRICT_BAND_EDGES = true;
+
+// How much history the Recording screen's tremor map shows.
+export const MAP_TRAIL_SEC = 60;
 
 // Registered by the Recording screen when audio feedback is enabled —
 // mirrors the original's `if(audioEnabled()&&screen==='active') updateAudio(...)`
@@ -397,7 +437,7 @@ export function pushPacket(ax, ay, az) {
         state.recentX,
         state.recentY,
         state.recentZ,
-        state.tremorLevel,
+        state.soundLevel, // FIFTIETH follow-up: 0 while muted (edge spill / above the upper limit)
         sr,
         {
           x: state.freqWinX,
@@ -459,9 +499,9 @@ function updateLiveMetrics() {
   // pitch — searched within the tremor band when band filtering is on
   // (the motion intensity counts), otherwise 1-20 Hz. null at intensity 0
   // (the sound is fading/silent then and holds its last pitch).
-  state.pitchFreqHz =
+  const peak =
     tremorLevel > 0
-      ? tremorPeakFrequency(
+      ? tremorPeakInfo(
           state.recentX,
           state.recentY,
           state.recentZ,
@@ -470,6 +510,28 @@ function updateLiveMetrics() {
           tremorBandActive ? tremorBandMaxHz : 20,
         )
       : null;
+  // FIFTIETH follow-up: spill-over from outside the band is not an
+  // in-band tremor — no pitch reading and no sound for it.
+  const spill = STRICT_BAND_EDGES && tremorBandActive && !!peak?.edgeSpill;
+  state.pitchFreqHz = peak && !spill ? peak.hz : null;
+  state.liveRmsG = rms;
+  state.liveRmsAllG = rmsAll;
+  state.mutedReason =
+    tremorLevel > 0 && spill ? 'edge' : tremorLevel > 0 && intensityCeilingG != null && rms > intensityCeilingG ? 'ceiling' : null;
+  state.soundLevel = state.mutedReason ? 0 : tremorLevel;
+  // FORTY-SEVENTH follow-up: strongest frequency in all motion (1-20 Hz),
+  // whenever there's motion above the noise floor — so the screen can show
+  // a tremor that's outside the band even when band filtering has turned
+  // its intensity down to 0.
+  state.actualFreqHz =
+    rmsAll > noiseFloorG ? tremorPeakFrequency(state.recentX, state.recentY, state.recentZ, sr, 1, 20) : null;
+  {
+    const now = Date.now();
+    const cutoff = now - MAP_TRAIL_SEC * 1000;
+    const kept = state.mapTrail.filter((p) => p.t >= cutoff);
+    kept.push({ t: now, af: state.actualFreqHz, ag: rmsAll, pf: state.pitchFreqHz, pg: rms });
+    state.mapTrail = kept;
+  }
   state.sparkBuf = [...state.sparkBuf.slice(-(SPARK_LEN - 1)), tremorLevel];
   state.tremorHistory = state.sparkBuf;
 
@@ -489,6 +551,15 @@ function updateLiveMetrics() {
   const MAX_STEP_PER_UPDATE = 30;
   const delta = tremorLevel - state.displayLevel;
   state.displayLevel = Math.round(state.displayLevel + Math.max(-MAX_STEP_PER_UPDATE, Math.min(MAX_STEP_PER_UPDATE, delta)));
+
+  // FORTY-SEVENTH follow-up: the g value shown next to the intensity %.
+  // Between 1 and 99 % it's the g that the displayed % stands for (the
+  // inverse of rmsToLevel), so the two always agree while the display
+  // catches up; at 0 % or 100 % (clipped) it's the measured g itself, so
+  // e.g. a tremor above full scale reads "100% (.52g)".
+  const dl = state.displayLevel;
+  state.displayG =
+    dl > 0 && dl < 100 && fullScaleG > noiseFloorG ? noiseFloorG + (dl / 100) * (fullScaleG - noiseFloorG) : rms;
 
   // Per-axis, Y weighted x1.28 to match real device calibration data
   const sdX = std(state.recentX),

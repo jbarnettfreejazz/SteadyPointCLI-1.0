@@ -57,6 +57,58 @@ export const CALIBRATION_FIELDS = [
   },
 ];
 
+// FIFTIETH follow-up: optional upper intensity limit — the sound goes
+// silent above it (readings and saved sessions are unaffected). Kept apart
+// from CALIBRATION_FIELDS because it's optional (a switch plus a value) and
+// only affects the sound.
+export const CEILING_FIELD = {
+  key: 'intensityCeilingG',
+  label: 'Upper limit',
+  help: 'Sound goes silent when intensity is above this, so you only hear a middle range. Doesn’t change readings.',
+  unit: 'g',
+  min: 0.01,
+  max: 4,
+  step: 0.01,
+  decimals: 2,
+};
+
+// Starting value when the upper limit is first switched on: full scale.
+export function defaultCeilingEntry(settings) {
+  const fs = typeof settings?.fullScaleG === 'number' ? settings.fullScaleG : DEFAULT_FULL_SCALE_G;
+  return Math.min(CEILING_FIELD.max, Math.max(CEILING_FIELD.min, fs)).toFixed(CEILING_FIELD.decimals);
+}
+
+export function formatCeiling(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? `${value.toFixed(CEILING_FIELD.decimals)} g` : 'Off';
+}
+
+// − / + for the upper limit.
+export function stepCeiling(text, direction) {
+  const f = CEILING_FIELD;
+  const current = parseEntry(text);
+  const p = 10 ** f.decimals;
+  const base = current == null ? (direction > 0 ? f.min - f.step : f.max + f.step) : current;
+  const next = Math.min(f.max, Math.max(f.min, Math.round((base + direction * f.step) * p) / p));
+  return next.toFixed(f.decimals);
+}
+
+// Checks the upper limit entry. enabled false -> always valid (value null).
+// It must be above the noise floor (else nothing could ever sound).
+// Returns { value, error }.
+export function validateCeiling(text, enabled, noiseFloorG) {
+  if (!enabled) return { value: null, error: null };
+  const f = CEILING_FIELD;
+  const n = parseEntry(text);
+  if (n == null) return { value: null, error: String(text ?? '').trim() === '' ? 'Enter a value' : 'Enter a number' };
+  const p = 10 ** f.decimals;
+  const v = Math.round(n * p) / p;
+  if (v < f.min || v > f.max) {
+    return { value: null, error: `Must be between ${f.min.toFixed(f.decimals)} – ${f.max.toFixed(f.decimals)} g` };
+  }
+  if (typeof noiseFloorG === 'number' && v <= noiseFloorG) return { value: null, error: 'Must be above the noise floor' };
+  return { value: v, error: null };
+}
+
 export const CALIBRATION_DEFAULTS = {
   fullScaleG: DEFAULT_FULL_SCALE_G,
   noiseFloorG: DEFAULT_NOISE_FLOOR_G,
@@ -166,11 +218,14 @@ export function entriesFromSettings(settings) {
 }
 
 // What a save would change, for the confirmation message.
-// Returns { scale: bool (full scale / noise floor), band: bool (band or filter) }.
-export function describeChanges(settings, values, bandFilterEnabled) {
+// Returns { scale: bool (full scale / noise floor), band: bool (band or filter),
+// ceiling: bool (upper limit) }.
+export function describeChanges(settings, values, bandFilterEnabled, ceilingG) {
   const differs = (key) => roundToField(key, settings?.[key] ?? CALIBRATION_DEFAULTS[key]) !== values[key];
   return {
     scale: differs('fullScaleG') || differs('noiseFloorG'),
     band: differs('tremorBandMinHz') || differs('tremorBandMaxHz') || !!settings?.bandFilterEnabled !== !!bandFilterEnabled,
+    // FIFTIETH follow-up: upper limit changed (only when one is passed).
+    ceiling: ceilingG !== undefined && (settings?.intensityCeilingG ?? null) !== ceilingG,
   };
 }

@@ -2785,6 +2785,182 @@ ends labelled "low" and "high" — the tremor band when band filtering is on,
 
 Changed: `src/screens/RecordingScreen.js`.
 
+## Forty-sixth follow-up — Session History's "This week" tab now filters
+
+The "This week" / "All sessions" tabs were carried over from the HTML
+prototype, where they only changed which tab looked selected — the list
+always showed every session. Now:
+
+- **This week** (the default) shows today plus the six days before it — the
+  same 7 days as Home's daily bars. If there's nothing in that time, it
+  says "No sessions in the last 7 days".
+- **All sessions** shows everything, as before.
+- Day headings: "Today", "Yesterday", then the weekday for the rest of the
+  last week; older days now show the date ("Tue, Oct 20", plus the year
+  if it isn't this year) instead of only a weekday name, which was
+  ambiguous for sessions more than a week old.
+
+Changed: `src/utils/sessionStats.js` (`groupPastSessionsByDay` takes
+`{ withinDays }` and dates older headings), `src/screens/SessionHistoryScreen.js`.
+
+## Forty-seventh follow-up — Recording screen text: g value and in-band frequency
+
+**Intensity line** under the ring now includes the motion in g:
+"Moderate  60% (.70g) intensity" (3 decimals below 0.1 g, e.g. ".015g").
+Between 1 and 99 % the g is the value the displayed % stands for, so the two
+always agree while the display catches up; at 0 % or 100 % it's the
+measured value, so a tremor above full scale reads e.g. "100% (1.24g)". It's
+the motion intensity is scored from — in-band when band filtering is on.
+
+**Pitch frequency text** (Frequency mode) now says whether the tremor is in
+the band (the pitch range: the tremor band, or 3–14 Hz with band filtering
+off), based on a new `actualFreqHz` in `liveSession.js` — the strongest
+frequency in all motion (1–20 Hz), computed whenever there's motion above
+the noise floor:
+
+- in the band → "in-band 4.7 Hz"
+- outside the band → "actual: 3.5 Hz, in-band: --"
+- outside the band, but a smaller in-band tremor is still driving the
+  pitch → "actual: 3.5 Hz, in-band: 4.1 Hz"
+- at rest → "—"
+
+The bar's marker shows the in-band frequency and is hidden when there's
+none (with band filtering off, below 3 Hz or above 14 Hz the pitch sits at
+the lowest/highest note, and the text shows "in-band: --").
+
+Changed: `src/state/liveSession.js` (`actualFreqHz`, `displayG`),
+`src/screens/RecordingScreen.js`.
+
+## Forty-eighth follow-up — "actual" shown whenever it differs from in-band
+
+The pitch frequency text now shows the actual frequency whenever it differs
+from the in-band reading (as displayed, to 0.1 Hz), including when both are
+inside the band — e.g. a strong in-band peak whose refined value lands a
+little differently than the all-motion one, or a tremor near the band edge.
+
+- actual and in-band the same → "in-band 6.2 Hz"
+- different → "actual: 6.4 Hz, in-band: 6.2 Hz"
+- no in-band reading → "actual: 3.5 Hz, in-band: --"
+- at rest → "—"
+
+Changed: `src/screens/RecordingScreen.js`.
+
+## Forty-ninth follow-up — frequency text and bar in both modes
+
+The Recording screen's frequency text ("in-band 6.2 Hz" / "actual: 3.5 Hz,
+in-band: --") and the bar under it now show whatever "Pitch follows" is set
+to, and whether or not sound is on — they describe the tremor, not just the
+pitch.
+
+- Frequency mode: labelled "pitch frequency", bar ends "low" / "high"
+  (it also sets the pitch), as before.
+- Intensity mode: labelled "frequency", bar ends show just the Hz values.
+- The older dominant-frequency readout (which only updated at intensity 8
+  or above and held its last value) is no longer shown on this screen.
+  Its value is still recorded with the session as before.
+
+Changed: `src/screens/RecordingScreen.js`.
+
+## Fiftieth follow-up — tremor map, strict band edges, upper limit, Frequency default
+
+Built for "fishing for triggers" in Continuous sessions: set a window of
+frequency and intensity, hear sound only when the tremor is inside it, and
+see where readings are falling when it's silent.
+
+**Tremor map** (`components/TremorMap.js`, Recording screen, both "Pitch
+follows" modes, with or without sound) — replaces the frequency bar.
+Frequency across (about 1–15 Hz), intensity up (g, log scale, from below
+the noise floor to above full scale).
+- Shaded box = the current settings, i.e. where sound plays: band min–max
+  across (whole width when band filtering is off), noise floor at the
+  bottom, the upper limit at the top when set — otherwise open at the top,
+  with full scale as a dashed line (above it the sound stays at full volume).
+- Filled dot = the in-band reading (in-band frequency, in-band g — what
+  drives the sound). Hollow dot = the actual reading (strongest frequency in
+  all motion, all-motion g), drawn when it differs from the in-band one.
+- Faint dots = the last 60 seconds (older = fainter), so after an audio
+  nudge you can see what just happened, and whether silent readings are
+  scattered or clustered just outside the box.
+- Under it: "in-band 4.7 Hz (.12g)", or "actual: 3.5 Hz (.20g) · 0.5 Hz
+  below band" with "in-band: --" / "in-band: 4.1 Hz (.012g)", plus
+  "· silent above upper limit" while the upper limit mutes the sound.
+- New live values in `liveSession.js`: `liveRmsG`, `liveRmsAllG`,
+  `mapTrail` (last `MAP_TRAIL_SEC` = 60 s of readings, reset per session).
+
+**Strict band edges** (`STRICT_BAND_EDGES = true` in `liveSession.js`).
+With band filtering on, a strong tremor just outside the band used to
+spill a little into it (a 2-second slice can't separate frequencies
+sharply) and be faintly heard. Now, when the strongest in-band point sits
+on the band edge with the spectrum still rising beyond it
+(`dsp.js tremorPeakInfo().edgeSpill`), it's treated as spill: no in-band
+reading and no sound. A real tremor at the edge is still a peak and still
+sounds. Checked on simulated tremors: 3.5 Hz and 9.5 Hz with a 4–8 Hz band
+now silent (they used to reach intensity > 0); 4.3 Hz and 6 Hz sound; a
+6 Hz tremor under a bigger 1.5 Hz movement still sounds.
+
+**Upper limit** (optional, off by default): Settings > Calibration and the
+in-session Edit Calibration Settings — a switch plus a value in g (starts
+at full scale; 0.01–4 g, above the noise floor). Above it the sound goes
+silent, so you can listen for a middle range. Sound only — readings, saved
+sessions and the session's calibration segments are unchanged. Setting
+`intensityCeilingG` (null = off); `liveSession.setIntensityCeilingG()`.
+Shown in the Settings > Calibration summary when set.
+
+Muting works by sending level 0 to the sound (`soundLevel`), so it fades
+out over 0.5 s like any rest and the pitch holds; `mutedReason` says why
+('edge' / 'ceiling').
+
+**"Pitch follows" now defaults to Frequency** for new installs. Existing
+installs keep their saved choice.
+
+Changed: `src/components/TremorMap.js` (new), `src/screens/RecordingScreen.js`,
+`src/state/liveSession.js`, `src/utils/dsp.js`, `src/services/sessionLogic.js`,
+`src/utils/calibrationLimits.js`, `src/components/CalibrationEditor.js`,
+`src/screens/CalibrationSettingsScreen.js`, `src/screens/SettingsScreen.js`,
+`src/state/initialState.js`.
+
+## Fifty-first follow-up — fix: crash with sound on (audio library thread race)
+
+**Symptom:** with sonification on, the app crashed after ~30 s – 1.5 min
+(never with sound off). Xcode stopped in react-native-audio-api's
+`AudioParam::getQueueEndValue()` → `deque::back called on an empty deque`,
+called from `linearRampToValueAtTime()`.
+
+**Cause** (in the library, version 0.4.18): each `AudioParam` keeps its
+scheduled changes in a `std::deque` that the JS thread appends to
+(`setValueAtTime` / `linearRampToValueAtTime`) while the audio thread
+removes from it (`getValueAtTime`, every sample) — with no lock. Our
+sound updates are two calls (anchor at the current value, then the ramp);
+if the audio thread takes the anchor between the two, the ramp call reads
+the last element of an empty queue and the app aborts. It's most likely
+when each change ends just as the next begins (Frequency-mode pitch, the
+rest fade steps, and the fiftieth follow-up's muting add more of these),
+and is very likely also the old "crash after ~2 minutes" once blamed on
+`cancelScheduledValues()`.
+
+**Fix** (native, `patches/react-native-audio-api+0.4.18.patch`, applied by
+patch-package on `npm install`; added to the existing AudioPlayer patch):
+`AudioParam` gets a mutex. The JS-thread scheduling methods lock it; the
+audio thread only *try*-locks, so it never waits — if the JS thread is
+mid-schedule it simply takes the next event on a later sample (a few
+microseconds later). No JS changes; the sound is unchanged.
+
+Verified off-device: the patched library compiles; a two-thread stress
+test under ThreadSanitizer reports 36 data races on the event queue with
+the original code and none with the patch (the one remaining report is
+the audio thread updating the param's current value while JS reads it —
+a single float, harmless, unchanged); patch-package 8 applies the combined
+patch cleanly to a fresh 0.4.18.
+
+**To apply on a machine that already has node_modules:**
+```
+rm -rf node_modules/react-native-audio-api
+npm install          # postinstall runs patch-package
+grep -c "SteadyPoint patch" node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp   # → 8
+```
+then Clean Build Folder and rebuild (no `pod install` needed — the pod
+compiles these sources straight from node_modules).
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

@@ -24,7 +24,7 @@ export function buildInitialState(appMode = 'real') {
       defaultType: 'guided',
       fullScaleG: 0.35, // "Full-scale range motion (in g) that reads as intensity 100" — see dsp.js's rmsToLevel()
       sonificationVoice: 'cello',
-      sonificationMode: 'intensity', // FORTY-FOURTH follow-up: what pitch follows — 'intensity' | 'frequency' (Settings > Sonification) // which single instrument (or 'custom') carries the combined-axis sonification signal
+      sonificationMode: 'frequency', // what pitch follows — 'intensity' | 'frequency' (Settings > Sonification). FORTY-FOURTH follow-up; FIFTIETH: new installs start on 'frequency' (existing users keep their saved choice)
       customTonalRangeMinHz: 200, // Settings > Sonification > "Custom" tonal range — only used when sonificationVoice === 'custom'
       customTonalRangeMaxHz: 700,
       tremorBandMinHz: 3, // Calibration Mode — see Calibration_Mode_Design.pdf
@@ -35,6 +35,7 @@ export function buildInitialState(appMode = 'real') {
       // THIRTY-FIFTH follow-up: band filtering is its own switch (Settings >
       // Calibration), turned on by saving a wizard calibration or by hand.
       bandFilterEnabled: false,
+      intensityCeilingG: null, // FIFTIETH follow-up: optional upper intensity limit (g) — sound is silent above it; null = off
       calibrationSource: null, // 'wizard' | 'manual' — who last set the calibration values
       calibrationSetAt: null, // ISO timestamp of that
       lastCalibratedAt: null, // ISO timestamp of the last completed Calibration Mode run — see HomeScreen.js's recalibration nudge
