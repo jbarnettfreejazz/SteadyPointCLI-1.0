@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch, Modal } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch, Modal, BackHandler, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
@@ -40,6 +40,20 @@ export default function RecordingScreen() {
   // made a long session appear to "pause": data kept flowing over
   // Bluetooth, but nothing was left running to process or record it.
   useKeepAwake();
+
+  // FIFTY-SECOND follow-up (Android): the system back button / back gesture
+  // would pop this screen without ending the session — the recording, the
+  // sound and the BLE stream carried on with no screen showing them. While
+  // this screen is focused, back does nothing; End Session is the way out.
+  // Focus-scoped because this screen stays mounted under Summary, where
+  // back must keep working. iOS unchanged (its swipe-back is left as is).
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android') return undefined;
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+      return () => sub.remove();
+    }, [])
+  );
 
   const audioEnabled = state.config.feedbackType === 'audio' || state.config.feedbackType === 'both';
   const hasGuideTrack = state.guideMediaSource === 'phone' && !!state.guideMediaPath;

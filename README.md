@@ -159,10 +159,14 @@ cd ios && pod install && cd ..
 npx react-native run-ios       # or open ios/SteadyPointCLI.xcworkspace in Xcode
 ```
 
-For Android:
+For Android (phone connected over USB with USB debugging on; on Samsung,
+turn off Settings > Security and privacy > Auto Blocker first):
 ```bash
+npm install
 npx react-native run-android
 ```
+No pod step. The app installs as `com.kaivo.steadypoint` ("SteadyPoint").
+If a build fails after a big change: `cd android && ./gradlew clean && cd ..`.
 
 ### Testing BLE
 The iOS **Simulator has no Bluetooth hardware** — BLE only works on a
@@ -2960,6 +2964,86 @@ grep -c "SteadyPoint patch" node_modules/react-native-audio-api/common/cpp/audio
 ```
 then Clean Build Folder and rebuild (no `pod install` needed — the pod
 compiles these sources straight from node_modules).
+
+## Fifty-second follow-up — Android support, round 1
+
+First Android round (Samsung Galaxy A-series test phone; RN 0.75.4 as is).
+iOS behaviour is unchanged.
+
+- **Sample voices were silent on Android.** react-native-audio-api 0.4.18
+  decodes a sample with `ma_decoder_init_file()` (a plain `fopen()`), and
+  the old Android path `file:///android_asset/custom/<file>` is an entry
+  inside the APK, not a file. New `services/bundledSamples.js`: on Android
+  the WAVs are copied out of the APK (`RNFS.copyFileAssets`, from the
+  `custom/` folder `react-native-asset` fills) into
+  `<documents>/samples/` and decoded from there; iOS still reads
+  `MainBundlePath`. The first voice to load copies all of them in one pass
+  (the three voices share it). A marker file holds the install's
+  `lastUpdateTime` (react-native-device-info), so every new install —
+  including each `run-android` — refreshes the copies and a changed WAV
+  with the same name is never stale; a single missing copy is restored
+  alone. `audio.js` no longer imports Platform/RNFS.
+- **Back button / back gesture during a session (Android).** It popped
+  Recording without ending the session. `RecordingScreen` now consumes
+  `hardwareBackPress` while it is focused (`useFocusEffect`, so Summary,
+  which sits on top of the still-mounted Recording screen, keeps normal
+  back). End Session is the way out. iOS swipe-back left as it was.
+- **Share calibration log (Android).** React Native's `Share` ignores `url`
+  on Android, so the share was empty. Android now shares the log's text as
+  `message`; a log longer than `ANDROID_SHARE_MAX_CHARS` (100,000
+  characters, far under Android's ~1 MB limit for shared data) is cut to
+  its newest whole lines with a note at the top. The file on the phone is
+  untouched. iOS still shares the file.
+- **Larger BLE packets (Android).** A BLE link starts at a 23-byte MTU (20
+  bytes per notification); iOS raises it by itself, Android only when the
+  app asks — a longer `x,y,z` text packet would be cut off. `ble.js` now
+  calls `requestMTU(185)` right after `connect()` on Android
+  (`requestLargerPacketsOnAndroid`), separately so a refusal only keeps
+  the default size and never fails the connection; the result is logged
+  as `[ble] MTU …`. iOS: no change.
+- **First Android build failed: duplicate native libraries.** `:app:mergeDebugNativeLibs`
+  stopped with "2 files found with path 'lib/arm64-v8a/libglog.so'" — one
+  from react-native-audio-api's build, one from react-android 0.75.4. On RN
+  < 0.76 the library links glog, fbjni, react_nativemodule_core etc. and only
+  excludes jsi/folly_runtime/reactnativejni/reactnative from its own
+  packaging. `android/app/build.gradle` now has
+  `packaging { jniLibs { pickFirsts += [...] } }` for those shared React
+  Native libraries (same react-android version on both sides, so either copy
+  is correct). Run `cd android && ./gradlew clean && cd ..` once after
+  applying.
+- **Welcome screen didn't scroll.** On the Samsung (larger default text,
+  Android navigation bar) the first-launch screen's "Use default values"
+  sat below the screen edge with no way to reach it. Its content and
+  buttons are now in a ScrollView (`flexGrow: 1`, `space-between`), so the
+  layout is unchanged when it fits and scrolls when it doesn't — on iOS too
+  (e.g. with larger text sizes). New `tests/render/testWelcome.mjs`.
+- **App ID and name (Android only):** `applicationId` is now
+  `com.kaivo.steadypoint` (same as iOS) and the launcher name
+  "SteadyPoint". `namespace` stays `com.steadypointcli` (the Kotlin
+  package) and `getMainComponentName()` stays "SteadyPointCLI" (must match
+  `app.json`). `npx react-native run-android` reads the new ID from
+  build.gradle, so no extra flag is needed. A test install under the old ID
+  `com.steadypointcli` is a separate app; uninstall it.
+- Already covered on Android without changes: BLE + Android 12+
+  permissions, guide tracks (react-native-sound 0.11.2 opens `file:/`
+  paths on Android), keep-awake, checkpoints/recovery, and the Fifty-first
+  follow-up's AudioParam mutex (it is in the library's shared C++, which
+  the Android build compiles too).
+- Tests: new `tests/logic/test10.mjs` (MTU request order, refusal
+  still connects, a 22-character packet parses whole, iOS untouched) and
+  `tests/logic/test9.mjs` (sample paths on both platforms,
+  shared copy pass, refresh on reinstall, missing file/asset, log share
+  on both platforms and trimming); `render/testRec.mjs` checks the back
+  guard (Android registers and consumes, iOS registers nothing, removed
+  on leave). 498 passed with the later fixes below.
+
+**Not in this round (next Android rounds):** a foreground service so long
+continuous sessions keep BLE and sound running with the screen off or
+another app open (Samsung stops background apps aggressively); recovery
+when the audio output changes mid-session (the library's Android Oboe
+stream has no disconnect handling — the Android side of the Nineteenth
+follow-up); audio focus; then the RN upgrade needed for Google Play
+(target API 36, 16 KB pages).
 
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core

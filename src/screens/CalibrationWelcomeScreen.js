@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
@@ -35,79 +35,87 @@ export default function CalibrationWelcomeScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
-      <View style={styles.content}>
-        <View style={[styles.iconWrap, { backgroundColor: c.info }]}>
-          <View style={styles.iconInner} />
-        </View>
-
-        <Text style={[styles.title, { color: c.tx1 }]}>Welcome to Steady Point</Text>
-        <Text style={[styles.subtitle, { color: c.tx3 }]}>Steady Point measures your tremors and tracks them over time.</Text>
-
-        <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
-          <Text style={[styles.cardTitle, { color: c.tx1 }]}>Connect your device</Text>
-          <Text style={[styles.cardBody, { color: c.tx2, marginBottom: 14 }]}>
-            Calibration needs a live connection to your M5Stick to measure your tremor.
-          </Text>
-          <View style={styles.connectRow}>
-            <View style={styles.statusRow}>
-              <View style={[styles.dot, { backgroundColor: state.isConnected ? c.success : c.tx3 }]} />
-              <Text style={{ color: c.tx2, fontSize: 13 }}>
-                {state.isConnected
-                  ? `${state.connectedDeviceName || 'Device'} connected`
-                  : state.bleConnecting
-                  ? 'Connecting…'
-                  : 'Not connected'}
-              </Text>
-            </View>
-            <Pressable
-              onPress={state.isConnected ? disconnect : connect}
-              disabled={state.bleConnecting}
-              style={[styles.connectButton, { borderColor: c.info }]}>
-              <Text style={{ color: c.info, fontWeight: '600', fontSize: 13 }}>
-                {state.isConnected ? 'Disconnect' : 'Connect'}
-              </Text>
-            </Pressable>
+      {/* FIFTY-SECOND follow-up: scrolls when it doesn't fit. On a Samsung
+          (larger default text, Android navigation bar) the footer's
+          "Use default values" was pushed off-screen with no way to reach it.
+          flexGrow + space-between keeps the old layout (footer at the
+          bottom) whenever everything fits. */}
+      <ScrollView contentContainerStyle={styles.scrollContent} bounces={false}>
+        <View style={styles.content}>
+          <View style={[styles.iconWrap, { backgroundColor: c.info }]}>
+            <View style={styles.iconInner} />
           </View>
-        </View>
 
-        <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
-          <Text style={[styles.cardTitle, { color: c.tx1 }]}>Let's calibrate to you first</Text>
-          <Text style={[styles.cardBody, { color: c.tx2 }]}>
-            Every reading Steady Point gives you is measured against your own personal scale — not a generic
-            default. Before your first measurement, we need a quick calibration so your "level 100" and tremor
-            frequency range are based on your tremors. You can recalibrate again at any point later from Settings
-            if your tremors change.
+          <Text style={[styles.title, { color: c.tx1 }]}>Welcome to Steady Point</Text>
+          <Text style={[styles.subtitle, { color: c.tx3 }]}>Steady Point measures your tremors and tracks them over time.</Text>
+
+          <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+            <Text style={[styles.cardTitle, { color: c.tx1 }]}>Connect your device</Text>
+            <Text style={[styles.cardBody, { color: c.tx2, marginBottom: 14 }]}>
+              Calibration needs a live connection to your M5Stick to measure your tremor.
+            </Text>
+            <View style={styles.connectRow}>
+              <View style={styles.statusRow}>
+                <View style={[styles.dot, { backgroundColor: state.isConnected ? c.success : c.tx3 }]} />
+                <Text style={{ color: c.tx2, fontSize: 13 }}>
+                  {state.isConnected
+                    ? `${state.connectedDeviceName || 'Device'} connected`
+                    : state.bleConnecting
+                    ? 'Connecting…'
+                    : 'Not connected'}
+                </Text>
+              </View>
+              <Pressable
+                onPress={state.isConnected ? disconnect : connect}
+                disabled={state.bleConnecting}
+                style={[styles.connectButton, { borderColor: c.info }]}>
+                <Text style={{ color: c.info, fontWeight: '600', fontSize: 13 }}>
+                  {state.isConnected ? 'Disconnect' : 'Connect'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+            <Text style={[styles.cardTitle, { color: c.tx1 }]}>Let's calibrate to you first</Text>
+            <Text style={[styles.cardBody, { color: c.tx2 }]}>
+              Every reading Steady Point gives you is measured against your own personal scale — not a generic
+              default. Before your first measurement, we need a quick calibration so your "level 100" and tremor
+              frequency range are based on your tremors. You can recalibrate again at any point later from Settings
+              if your tremors change.
+            </Text>
+          </View>
+
+          <Text style={[styles.note, { color: c.info }]}>
+            This takes less than a minute. You can also start with default values and calibrate later from Settings.
           </Text>
         </View>
 
-        <Text style={[styles.note, { color: c.info }]}>
-          This takes less than a minute. You can also start with default values and calibrate later from Settings.
-        </Text>
-      </View>
-
-      <View style={styles.footer}>
-        <Pressable
-          disabled={!state.isConnected}
-          onPress={() => navigation.navigate('calibration', { fromWelcome: true })}
-          style={[styles.button, { backgroundColor: state.isConnected ? c.info : c.bg3 }]}>
-          <Text style={[styles.buttonText, { color: state.isConnected ? '#fff' : c.tx3 }]}>Calibrate Now</Text>
-        </Pressable>
-        <Text style={[styles.footerNote, { color: c.tx3 }]}>
-          {state.isConnected ? 'Recommended before your first measurement' : 'Connect your device to calibrate'}
-        </Text>
-        <Pressable
-          onPress={applyDefaults}
-          style={[styles.secondaryButton, { borderColor: c.bd2 }]}
-          accessibilityRole="button">
-          <Text style={{ color: c.tx1, fontWeight: '600' }}>Use default values</Text>
-        </Pressable>
-      </View>
+        <View style={styles.footer}>
+          <Pressable
+            disabled={!state.isConnected}
+            onPress={() => navigation.navigate('calibration', { fromWelcome: true })}
+            style={[styles.button, { backgroundColor: state.isConnected ? c.info : c.bg3 }]}>
+            <Text style={[styles.buttonText, { color: state.isConnected ? '#fff' : c.tx3 }]}>Calibrate Now</Text>
+          </Pressable>
+          <Text style={[styles.footerNote, { color: c.tx3 }]}>
+            {state.isConnected ? 'Recommended before your first measurement' : 'Connect your device to calibrate'}
+          </Text>
+          <Pressable
+            onPress={applyDefaults}
+            style={[styles.secondaryButton, { borderColor: c.bd2 }]}
+            accessibilityRole="button">
+            <Text style={{ color: c.tx1, fontWeight: '600' }}>Use default values</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'space-between' },
+  container: { flex: 1 },
+  scrollContent: { flexGrow: 1, justifyContent: 'space-between' },
   content: { padding: 24, alignItems: 'center', flexGrow: 1, justifyContent: 'center' },
   iconWrap: { width: 64, height: 64, borderRadius: radii.lg, marginBottom: 20, alignItems: 'center', justifyContent: 'center' },
   iconInner: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#fff' },

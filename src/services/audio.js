@@ -1,6 +1,5 @@
 import { AudioContext } from 'react-native-audio-api';
-import { Platform } from 'react-native';
-import RNFS from 'react-native-fs';
+import { samplePaths } from './bundledSamples';
 
 // ══════════════════════════════════════════════════════
 // AUDIO SONIFICATION — SINGLE COMBINED VOICE
@@ -198,13 +197,11 @@ const ZONE_XFADE_SEC = 0.3;
 // hovers near the midpoint between two notes.
 const ZONE_HYSTERESIS_SEMITONES = 1.0;
 
-function bundledFilePath(fileName) {
-  if (Platform.OS === 'ios') {
-    return `${RNFS.MainBundlePath}/${fileName}`;
-  }
-  // Unverified — this project's real device testing has been iOS-only.
-  return `file:///android_asset/custom/${fileName}`;
-}
+// Every sample file the voices use. FIFTY-SECOND follow-up: on Android the
+// WAVs have to be copied out of the APK before the decoder can open them
+// (see services/bundledSamples.js); the first voice to load copies this
+// whole set in one pass. iOS reads them straight from the app bundle.
+const ALL_SAMPLE_FILES = [...new Set([...CELLO_ZONES, ...VIOLA_ZONES, ...VIOLIN_ZONES].map((z) => z.file))];
 
 // Flip to true to re-enable the [sonification] diagnostic console.log in
 // updateAudio() (sr/level/rawFreq/smoothedFreq/mappedFreq per update) —
@@ -505,7 +502,8 @@ class ZonedSampleVoice {
   }
 
   async load() {
-    const buffers = await Promise.all(this.zones.map((z) => this.ctx.decodeAudioDataSource(bundledFilePath(z.file))));
+    const paths = await samplePaths(this.zones.map((z) => z.file), ALL_SAMPLE_FILES);
+    const buffers = await Promise.all(paths.map((p) => this.ctx.decodeAudioDataSource(p)));
     buffers.forEach((buffer, i) => {
       const z = this.zones[i];
       z.stretcher = this.ctx.createStretcher();

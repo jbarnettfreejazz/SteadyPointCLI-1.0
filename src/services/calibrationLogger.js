@@ -1,5 +1,5 @@
 import RNFS from 'react-native-fs';
-import { Share } from 'react-native';
+import { Share, Platform } from 'react-native';
 
 // File-based calibration logging — console.log() alone isn't useful once
 // this ships to TestFlight: there's no Metro/debugger attached to a
@@ -8,7 +8,7 @@ import { Share } from 'react-native';
 // require connecting a tester's physical phone to a Mac with Xcode to
 // view (the same way we retrieved an earlier crash log) — not realistic
 // for a remote tester. Writing to an actual file the user can share via
-// the iOS share sheet (AirDrop, email, Files, etc.) is the only
+// the share sheet (iOS: AirDrop, email, Files; Android: shared as text) is the only
 // practical way to get this data back from someone who isn't the
 // developer.
 const LOG_FILE_PATH = `${RNFS.DocumentDirectoryPath}/calibration-log.txt`;
@@ -43,15 +43,35 @@ export async function calibrationLogExists() {
   return RNFS.exists(LOG_FILE_PATH);
 }
 
-// Opens the iOS share sheet with the log file. Uses React Native's own
-// built-in Share API (not a third-party package) — confirmed its `url`
-// option explicitly supports local file:// URLs on iOS specifically
-// (message-only on Android, which doesn't matter since this app is
-// iOS-only), so no new native dependency was needed for this.
+// Opens the share sheet with the log. Uses React Native's own built-in
+// Share API (not a third-party package).
+// - iOS: shares the file itself — Share's `url` option supports local
+//   file:// URLs on iOS.
+// - Android (FIFTY-SECOND follow-up): Share ignores `url` and only sends
+//   `message`, so the file link produced an empty share. The log's text is
+//   shared instead (email, Drive, messaging apps all take it). Android
+//   passes shared text through a size-limited system channel, so a very
+//   long log is cut to its most recent ANDROID_SHARE_MAX_CHARS characters,
+//   with a note saying so; the file on the phone is untouched.
+export const ANDROID_SHARE_MAX_CHARS = 100000; // ~200 KB as UTF-16, well under the ~1 MB limit
+
+export function androidShareText(text, max = ANDROID_SHARE_MAX_CHARS) {
+  if (text.length <= max) return text;
+  const tail = text.slice(text.length - max);
+  const firstLine = tail.indexOf('\n');
+  const kept = firstLine >= 0 ? tail.slice(firstLine + 1) : tail; // start on a whole line
+  return `[SteadyPoint calibration log — earlier lines left out; showing the most recent part]\n${kept}`;
+}
+
 export async function shareCalibrationLog() {
   const exists = await RNFS.exists(LOG_FILE_PATH);
   if (!exists) {
     throw new Error('No calibration log yet — run a calibration first.');
+  }
+  if (Platform.OS === 'android') {
+    const text = await RNFS.readFile(LOG_FILE_PATH, 'utf8');
+    await Share.share({ title: 'SteadyPoint calibration log', message: androidShareText(text) });
+    return;
   }
   await Share.share({ url: `file://${LOG_FILE_PATH}` });
 }

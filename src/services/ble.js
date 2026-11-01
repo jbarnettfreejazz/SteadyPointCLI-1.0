@@ -37,6 +37,27 @@ export async function requestBlePermissions() {
   );
 }
 
+// FIFTY-SECOND follow-up (Android): a BLE link starts with a 23-byte MTU,
+// i.e. at most 20 bytes per notification. iOS negotiates a larger MTU by
+// itself; Android only does when the app asks. A longer "x,y,z" text
+// packet (e.g. "-0.0123,0.4567,-0.9876" is 22 characters) would be cut off
+// by the M5Stick's BLE stack — corrupt or dropped readings. Asked for
+// separately from connect() so a refusal can't fail the connection: the
+// link just keeps the default size. iOS: nothing to do.
+export const ANDROID_REQUESTED_MTU = 185;
+
+export async function requestLargerPacketsOnAndroid(connected) {
+  if (Platform.OS !== 'android') return null;
+  try {
+    const d = await connected.requestMTU(ANDROID_REQUESTED_MTU);
+    console.log(`[ble] MTU ${d?.mtu ?? '?'} (requested ${ANDROID_REQUESTED_MTU})`);
+    return d?.mtu ?? null;
+  } catch (e) {
+    console.warn('[ble] MTU request failed, keeping the default:', e?.message || e);
+    return null;
+  }
+}
+
 // callbacks: { onConnecting, onConnected, onDisconnected, onError }
 export async function connectBLE(callbacks = {}) {
   const { onConnecting, onConnected, onDisconnected, onError } = callbacks;
@@ -59,6 +80,7 @@ export async function connectBLE(callbacks = {}) {
       manager.stopDeviceScan();
       try {
         const connected = await device.connect();
+        await requestLargerPacketsOnAndroid(connected);
         await connected.discoverAllServicesAndCharacteristics();
         connectedDevice = connected;
 

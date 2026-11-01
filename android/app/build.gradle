@@ -79,7 +79,7 @@ android {
 
     namespace "com.steadypointcli"
     defaultConfig {
-        applicationId "com.steadypointcli"
+        applicationId "com.kaivo.steadypoint" // FIFTY-SECOND follow-up: matches the iOS bundle ID; namespace stays com.steadypointcli (the Kotlin package)
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -91,6 +91,27 @@ android {
             storePassword 'android'
             keyAlias 'androiddebugkey'
             keyPassword 'android'
+        }
+    }
+    // FIFTY-SECOND follow-up: react-native-audio-api 0.4.18 links against
+    // React Native's own native libraries and, on RN 0.75 (old architecture),
+    // ships copies of some of them in its .aar — the same files react-android
+    // already provides, so the APK merge fails with "2 files found with path
+    // 'lib/<abi>/libglog.so'". The library only excludes jsi, folly_runtime,
+    // reactnativejni and reactnative itself. Both copies come from the same
+    // react-android 0.75.4, so keeping the first is safe. Listed together so
+    // the next duplicate doesn't fail the following build.
+    packaging {
+        jniLibs {
+            pickFirsts += [
+                '**/libglog.so',
+                '**/libfbjni.so',
+                '**/libc++_shared.so',
+                '**/libreact_nativemodule_core.so',
+                '**/libfolly_runtime.so',
+                '**/libreactnativejni.so',
+                '**/libjsi.so'
+            ]
         }
     }
     buildTypes {
