@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SteadyPoint icon background (FIFTY-THIRD follow-up): the iOS icon's diagonal
+     gradient, top-left #FF0F2847 to bottom-right #FF2563EB, spanning the
+     visible 72dp of the 108dp adaptive-icon layer. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="18"
+                android:startY="18"
+                android:endX="90"
+                android:endY="90"
+                android:startColor="#FF0F2847"
+                android:endColor="#FF2563EB" />
+        </aapt:attr>
+    </path>
+</vector>

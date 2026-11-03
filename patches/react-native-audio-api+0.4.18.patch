@@ -1,3 +1,42 @@
+diff --git a/node_modules/react-native-audio-api/android/src/main/java/com/swmansion/audioapi/AudioAPIPackage.kt b/node_modules/react-native-audio-api/android/src/main/java/com/swmansion/audioapi/AudioAPIPackage.kt
+index f6db711..de447c9 100644
+--- a/node_modules/react-native-audio-api/android/src/main/java/com/swmansion/audioapi/AudioAPIPackage.kt
++++ b/node_modules/react-native-audio-api/android/src/main/java/com/swmansion/audioapi/AudioAPIPackage.kt
+@@ -29,13 +29,18 @@ class AudioAPIPackage :
+       fun (): Map<String, ReactModuleInfo> =
+         mapOf(
+           AudioAPIModule.NAME to
++            // SteadyPoint patch (RN 0.81): ReactModuleInfo's parameters were
++            // renamed (_canOverrideExistingModule -> canOverrideExistingModule,
++            // _needsEagerInit -> needsEagerInit), so the named arguments no
++            // longer compiled. Positional: name, className,
++            // canOverrideExistingModule, needsEagerInit, isCxxModule, isTurboModule.
+             ReactModuleInfo(
+               AudioAPIModule.NAME,
+               AudioAPIModule::class.java.simpleName,
+-              _canOverrideExistingModule = true,
+-              _needsEagerInit = false,
+-              isCxxModule = false,
+-              isTurboModule = BuildConfig.IS_NEW_ARCHITECTURE_ENABLED,
++              true,
++              false,
++              false,
++              BuildConfig.IS_NEW_ARCHITECTURE_ENABLED,
+             ),
+         ),
+     )
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioNode.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioNode.cpp
+index 82c696d..23b9102 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioNode.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioNode.cpp
+@@ -1,4 +1,7 @@
+ #include <audioapi/core/AudioNode.h>
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <stdexcept>
+ #include <audioapi/core/BaseAudioContext.h>
+ #include <audioapi/core/utils/AudioArray.h>
+ #include <audioapi/core/utils/AudioBus.h>
 diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
 index 38da2a5..fa97ac1 100644
 --- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
@@ -123,6 +162,118 @@ index 5083067..9e352b5 100644
  #include <limits>
  
  // https://webaudio.github.io/web-audio-api/
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/analysis/AnalyserNode.h b/node_modules/react-native-audio-api/common/cpp/audioapi/core/analysis/AnalyserNode.h
+index 88ad50a..151a180 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/analysis/AnalyserNode.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/analysis/AnalyserNode.h
+@@ -1,4 +1,7 @@
+ #pragma once
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <stdexcept>
+ 
+ #include <audioapi/core/AudioNode.h>
+ #include <audioapi/dsp/FFTFrame.h>
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/effects/PeriodicWave.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/core/effects/PeriodicWave.cpp
+index 544e6df..3bef24d 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/effects/PeriodicWave.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/effects/PeriodicWave.cpp
+@@ -27,6 +27,9 @@
+  */
+ 
+ #include <audioapi/core/Constants.h>
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <stdexcept>
+ #include <audioapi/core/effects/PeriodicWave.h>
+ #include <audioapi/dsp/FFTFrame.h>
+ #include <audioapi/dsp/VectorMath.h>
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioBufferSourceNode.h b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioBufferSourceNode.h
+index ebcf07f..b5e8948 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioBufferSourceNode.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioBufferSourceNode.h
+@@ -1,4 +1,7 @@
+ #pragma once
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <mutex>
+ 
+ #include <audioapi/core/sources/AudioBuffer.h>
+ #include <audioapi/core/sources/AudioScheduledSourceNode.h>
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h
+index 3063049..1e764a2 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h
+@@ -1,4 +1,7 @@
+ #pragma once
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <stdexcept>
+ 
+ #include <audioapi/core/AudioParam.h>
+ #include <audioapi/core/sources/AudioScheduledSourceNode.h>
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/dsp/FFTFrame.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/dsp/FFTFrame.cpp
+index 824f8e8..cd754fe 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/dsp/FFTFrame.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/dsp/FFTFrame.cpp
+@@ -1,4 +1,7 @@
+ #include <audioapi/dsp/FFTFrame.h>
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <vector>
+ 
+ namespace audioapi {
+ #if defined(HAVE_ACCELERATE)
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiHostObject.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiHostObject.cpp
+index f045d84..c6d1ea4 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiHostObject.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiHostObject.cpp
+@@ -1,4 +1,7 @@
+ #include <audioapi/jsi/JsiHostObject.h>
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <functional>
+ 
+ namespace audioapi {
+ JsiHostObject::JsiHostObject() {
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiPromise.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiPromise.cpp
+index 88e6dde..ab7af83 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiPromise.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/jsi/JsiPromise.cpp
+@@ -1,4 +1,7 @@
+ #include <audioapi/jsi/JsiPromise.h>
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <stdexcept>
+ 
+ namespace audioapi {
+ 
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/fft.h b/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/fft.h
+index 51984f0..4993383 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/fft.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/fft.h
+@@ -1,4 +1,9 @@
+ #include <audioapi/libs/dsp/common.h>
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <utility>
++#include <algorithm>
++#include <iterator>
+ 
+ #ifndef SIGNALSMITH_FFT_V5
+ #define SIGNALSMITH_FFT_V5
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/spectral.h b/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/spectral.h
+index c822bf3..a3da2ea 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/spectral.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/libs/dsp/spectral.h
+@@ -1,4 +1,7 @@
+ #include <audioapi/libs/dsp/common.h>
++// SteadyPoint patch (RN 0.81 / NDK 27): NDK 27's libc++ no longer pulls these in
++// through other standard headers, so include them directly.
++#include <utility>
+ 
+ #ifndef SIGNALSMITH_DSP_SPECTRAL_H
+ #define SIGNALSMITH_DSP_SPECTRAL_H
 diff --git a/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.h b/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.h
 index 592864f..ccb499c 100644
 --- a/node_modules/react-native-audio-api/ios/audioapi/ios/core/AudioPlayer.h

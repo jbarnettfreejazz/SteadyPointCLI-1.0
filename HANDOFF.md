@@ -1,6 +1,7 @@
 # SteadyPoint — handoff note (Oct 31, 2026)
 
-React Native 0.75.4 app (repo root), on iOS and — since the Fifty-second
+React Native 0.81.6 app (old architecture; upgraded from 0.75.4 in the
+Fifty-fourth follow-up — do not go past 0.81.x, see README) (repo root), on iOS and — since the Fifty-second
 follow-up — being brought up on Android, that reads an M5StickC Plus over BLE
 and gives tremor biofeedback: live intensity, sonification (pitch follows
 intensity or frequency, volume follows intensity), sessions, analytics.
@@ -65,13 +66,24 @@ map** on the Recording screen shows the settings box, the in-band reading
 
 ## Android plan (agreed)
 
-Round 1 done (52nd). Next, ask before each: foreground service for long
+Round 1 done (52nd) and device-tested OK. Android icon done (53rd).
+RN 0.81.6 upgrade (Phase 2) done (54th) — waiting on device testing. Next, ask before each: foreground service for long
 continuous sessions with the screen off / other apps (small native module,
 no new library); audio output change + audio focus recovery (patch to the
 library's Android Oboe player); then the RN upgrade Google Play requires
 (target API 36, 16 KB pages — also affects iOS and the 0.4.18 pin).
 Google Play Console account not created yet; organization vs personal
 account still to decide (Play lists medical apps as organization-only).
+
+4. **RN 0.81.6 upgrade (54th)** — first get both native builds through
+   (paste errors). Then iOS regression before any TestFlight: long
+   sound-on sessions (old crash window), background audio, Bluetooth
+   speaker switch mid-session, phone-call interruption, guide track,
+   calibration wizard, history/analytics, navigation (Summary → Home,
+   Session Detail → back, resume after disconnect), and install over the
+   current TestFlight build keeps saved sessions. Android: same, plus
+   edge-to-edge layout (status/nav bars, light + dark mode) and the back
+   gesture on Recording.
 
 ## Ideas discussed, not started (ask before doing)
 
@@ -91,7 +103,12 @@ account still to decide (Play lists medical apps as organization-only).
 
 ## Things to know
 
+- React Native 0.81.6, old architecture (`newArchEnabled=false`,
+  `RCT_NEW_ARCH_ENABLED=0`, Info.plist `RCTNewArchEnabled=false`). 0.81 is
+  the last version allowing it. Navigation goes through
+  `src/navigation/go.js` (React Navigation 7, v6 behaviour).
 - Audio library is pinned at react-native-audio-api 0.4.18 (patched).
+  react-native-sound 0.11.2 is also patched (RN 0.81 resolveAssetSource).
   Don't use `cancelScheduledValues()` (crashes). Newer versions are a major
   API upgrade.
 - Flags: `REST_FADE_ENABLED` (audio.js), `STRICT_BAND_EDGES`,

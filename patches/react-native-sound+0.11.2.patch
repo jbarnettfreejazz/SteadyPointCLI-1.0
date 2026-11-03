@@ -1,0 +1,17 @@
+diff --git a/node_modules/react-native-sound/sound.js b/node_modules/react-native-sound/sound.js
+index c9bcbaf..d18f485 100644
+--- a/node_modules/react-native-sound/sound.js
++++ b/node_modules/react-native-sound/sound.js
+@@ -4,7 +4,11 @@ var ReactNative = require('react-native');
+ var RNSound = ReactNative.NativeModules.RNSound;
+ var IsAndroid = RNSound.IsAndroid;
+ var IsWindows = RNSound.IsWindows;
+-var resolveAssetSource = require("react-native/Libraries/Image/resolveAssetSource");
++// SteadyPoint patch (FIFTY-FOURTH follow-up, RN 0.81): the old deep require of
++// react-native/Libraries/Image/resolveAssetSource returns { default: fn } since
++// that file became an ES module, and calling it threw "is not a function (it
++// is Object)" when a guide track was played. Use the public API instead.
++var resolveAssetSource = ReactNative.Image.resolveAssetSource;
+ var eventEmitter = new ReactNative.NativeEventEmitter(RNSound);
+ 
+ var nextKey = 0;
