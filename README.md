@@ -3236,6 +3236,128 @@ downloads Gradle 8.14.3, SDK 36 and NDK 27 — install "Android SDK Platform
 36", "Build-Tools 36.0.0" and "NDK 27.1.12297006" in Android Studio's SDK
 Manager first).
 
+## Fifty-fifth follow-up — Android session foreground service; "Calibrate" button
+
+**Settings > Calibration button wording.** Was "Open Calibration" until a
+wizard calibration had been run (including after "Use default values"),
+then "Recalibrate". Now **"Calibrate"** until then, "Recalibrate" after
+(`CalibrationSettingsScreen.js`).
+
+**Android: sessions keep running with the screen off or another app open.**
+Android (Samsung especially) pauses or stops a background app after a
+while, which cut off BLE readings, the clock and the sound in long
+continuous sessions. iOS already handles this with its background modes
+(16th/18th follow-ups). While a session runs, Android now runs a
+**foreground service**:
+- `android/app/src/main/java/com/steadypointcli/SessionForegroundService.kt`
+  — shows an ongoing notification "SteadyPoint session in progress" /
+  "Continuous session" or "N-minute session" (low importance, no sound;
+  tapping opens the app; icon `res/drawable/ic_stat_session.xml`, channel
+  "Sessions"); types `connectedDevice|mediaPlayback` (Android 14+ needs
+  them), falling back to `mediaPlayback` alone if the combined start is
+  refused; holds a partial CPU wake lock (12 h safety cap) so readings and
+  timers keep going with the screen off; `START_NOT_STICKY`; stops itself if
+  the app is swiped away from recents (the session is then saved from its
+  checkpoint at the next launch, as before).
+- `SessionServiceModule.kt` (`NativeModules.SteadyPointSession.start(text)`
+  / `.stop()`, never reject) and `SessionServicePackage.kt` (registered in
+  `MainApplication.kt`). In-app native module rather than a library, so it
+  can't conflict with the version pins.
+- `AndroidManifest.xml`: `FOREGROUND_SERVICE`,
+  `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`,
+  `POST_NOTIFICATIONS`, `WAKE_LOCK`, and the `<service>` entry.
+  `app/build.gradle`: `androidx.core:core-ktx:1.13.1` (NotificationCompat /
+  ServiceCompat; the version audio-api already uses).
+- `src/services/sessionService.js`: `startSessionService(config)` /
+  `stopSessionService()`; no-ops on iOS and if the native module is missing;
+  never throw. Calls are queued in order (a session ending while the
+  permission dialog is open still stops after it started). **Notification
+  permission** (Android 13+) is asked **once, at the first session start**;
+  if declined, the service still runs but Android hides its notification;
+  not asked again (key `steadypoint.notificationPermissionAsked`; the user
+  can enable it in the phone's Settings).
+- `sessionLogic.js`: started in `startSession()` (not in demo mode — no
+  device) and `resumeSession()`; stopped in `endSession()`, which every end
+  goes through (button, timer, disconnect).
+- Keep-awake on the Recording screen is unchanged (screen stays on while
+  the app is in front); the service covers screen-off and other apps.
+- Google Play (Phase 4): apps using foreground services must declare why in
+  the Play Console (possibly with a short video) — BLE sensor +
+  sonification/guide audio during a session.
+
+Tests: new `tests/logic/test13.mjs` (sessionService: iOS no-op, permission
+asked once and not again after a decline, no dialog when already granted or
+on Android 12, call order with an open dialog, native failure resolves
+false, missing module); `test8` checks start/stop across a timed session,
+disconnect, resume and end, and that demo mode doesn't start it;
+`render/testCal` checks "Calibrate". 533 passed. Kotlin not compiled here
+(no Android SDK): checked against RN 0.81's Android sources
+(`BaseReactPackage`, `ReactModuleInfo`, `ReactContextBaseJavaModule`) and
+AndroidX core (`ServiceCompat.startForeground` 4-arg, `STOP_FOREGROUND_REMOVE`,
+`NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE`,
+`ContextCompat.startForegroundService`).
+
+## Fifty-sixth follow-up — Android: dialog buttons hidden behind the navigation bar
+
+**Reported:** Edit Calibration Settings during a continuous session (Android)
+— Cancel / Save weren't visible and the dialog couldn't be scrolled to them
+until a value was edited (the keyboard then shrank the window and scrolling
+worked).
+
+**Cause:** since the Fifty-fourth follow-up turned on edge-to-edge, React
+Native's `Modal` on Android always draws under the status and navigation
+bars (`ReactModalHostView`: translucent when the edge-to-edge flag is on),
+and the `SafeAreaView` inside the dialog wasn't keeping its content clear of
+the navigation bar — so the ScrollView's frame reached under it, its content
+"fit", and it wouldn't scroll.
+
+**Fix:** new `src/components/ModalSafeArea.js` as the root of every Modal's
+content (Recording's Edit Calibration dialog; Summary's session-note and
+save-session dialogs, same structure). Android: a View padded with the
+screen's insets from the app's root `SafeAreaProvider`
+(`useSafeAreaInsets()`), i.e. exactly the bars the modal draws under. iOS:
+`SafeAreaView` as before. Not reproduced on a device here — confirm on the
+Samsung. `tests/render/testRec.mjs`: Android dialog root padded by the
+insets with Cancel/Save inside; iOS root unchanged. `tests/render/mocks.js`
+gains `useSafeAreaInsets`. 536 passed.
+
+## Fifty-seventh follow-up — Edit Calibration during a session is now a screen (Android fix)
+
+The Fifty-sixth follow-up's padding didn't help. A device screenshot showed
+the real cause: on Android (old architecture, RN 0.81) the `Modal`'s content
+was laid out **as tall as all of its content** instead of the dialog window
+— it ran straight under the navigation bar and stopped there, so the
+ScrollView had nothing to scroll. Opening the keyboard resized the dialog
+window, which made RN size the content to the real window, so scrolling
+worked after editing a field. The same editor on a normal screen (Settings >
+Calibration) was fine.
+
+**Fix:** the session editor is no longer a `Modal`. New
+`src/screens/SessionCalibrationScreen.js` (title, note, `CalibrationEditor`
+in a ScrollView inside SafeAreaView — the same layout as Settings),
+registered in `RootNavigator` as `sessionCalibration` with
+`presentation: 'modal'`: a page sheet on iOS (same look as before), a full
+screen on Android. The Recording screen's button does
+`go(navigation, 'sessionCalibration')`; Recording stays mounted underneath
+(as under Summary), so recording, sound, keep-awake and the session service
+carry on while editing. Back / Cancel / swipe-down return to the session; Save
+saves the calibration (`calibrationSource: 'manual'`) and applies it to the
+running session, as before. The Recording screen's back-button guard is
+focus-scoped, so back works on the editor screen. Removed from
+`RecordingScreen.js`: the Modal, its state and save handler, and now-unused
+imports.
+
+Summary's two dialogs (session note, save as custom session) keep their
+Modals: Cancel/Save are in a header at the top and the content is short, so
+they don't depend on scrolling; `ModalSafeArea` (56th) still keeps that
+header clear of the status bar on Android.
+
+Tests (`tests/render/testRec.mjs`): no dialog on Recording; the button
+navigates to `sessionCalibration` (v6-style `pop`); the editor screen shows
+the note and four fields in a ScrollView/SafeAreaView; Save confirms,
+saves, applies and goes back; Cancel goes back without applying. The 56th
+follow-up's modal-padding checks were removed with the Modal. 534 passed.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

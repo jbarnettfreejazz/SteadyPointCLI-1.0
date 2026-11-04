@@ -67,9 +67,8 @@ map** on the Recording screen shows the settings box, the in-band reading
 ## Android plan (agreed)
 
 Round 1 done (52nd) and device-tested OK. Android icon done (53rd).
-RN 0.81.6 upgrade (Phase 2) done (54th) — waiting on device testing. Next, ask before each: foreground service for long
-continuous sessions with the screen off / other apps (small native module,
-no new library); audio output change + audio focus recovery (patch to the
+RN 0.81.6 upgrade (Phase 2) done (54th) and device-tested on both platforms.
+Session foreground service done (55th) — waiting on device testing. Next, ask before each: audio output change + audio focus recovery (patch to the
 library's Android Oboe player); then the RN upgrade Google Play requires
 (target API 36, 16 KB pages — also affects iOS and the 0.4.18 pin).
 Google Play Console account not created yet; organization vs personal
@@ -84,6 +83,23 @@ account still to decide (Play lists medical apps as organization-only).
    current TestFlight build keeps saved sessions. Android: same, plus
    edge-to-edge layout (status/nav bars, light + dark mode) and the back
    gesture on Recording.
+
+5. **Android foreground service + "Calibrate" label (55th)** — Settings >
+   Calibration shows "Calibrate" until a wizard calibration, then
+   "Recalibrate". On the Samsung: first session start asks for
+   notifications once (allow); the "SteadyPoint session in progress"
+   notification shows during sessions and disappears at the end (button,
+   timer, disconnect); a continuous session keeps recording and sounding
+   with the screen off (power button) and in another app for 10+ minutes;
+   tapping the notification returns to the session; resume after a
+   disconnect brings the notification back; declining the permission on a
+   fresh install still lets sessions run (no notification shown).
+
+6. **Edit Calibration during a session is a screen (57th; replaces the 56th
+   attempt)** — Android: Cancel/Save reachable by scrolling without editing
+   first, above the navigation bar; back/Cancel return to the running
+   session (clock, sound and notification continue); Save applies to the
+   session. iOS: still opens as a sheet, swipe down or Cancel closes it.
 
 ## Ideas discussed, not started (ask before doing)
 

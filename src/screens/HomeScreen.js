@@ -23,6 +23,7 @@ import {
 import { RESUME_WINDOW_MIN } from '../utils/sessionRecord';
 import CustomSessionRow from '../components/CustomSessionRow';
 import { HOME_CUSTOM_SESSION_LIMIT, sortByRecentUse } from '../utils/customSessions';
+import { go } from '../navigation/go';
 
 // "CUSTOM SESSIONS" section (formerly "MY SESSIONS", hidden behind
 // FEATURE_MY_SESSIONS while being reconsidered) — re-enabled with the two
@@ -197,7 +198,7 @@ export default function HomeScreen() {
 
   const needsRecalibration = useMemo(() => {
     const last = state.settings.lastCalibratedAt;
-    if (!last) return false; // never calibrated — handled by Settings' "Open Calibration" button, not a nudge
+    if (!last) return false; // never calibrated — handled by Settings' "Calibrate" button, not a nudge
     const days = (Date.now() - new Date(last).getTime()) / DAY_MS;
     return days >= RECALIBRATION_REMINDER_DAYS;
   }, [state.settings.lastCalibratedAt]);
@@ -226,7 +227,7 @@ export default function HomeScreen() {
 
   const handleEditPinned = (id) => {
     loadPinnedForEdit(state, actions, id);
-    navigation.navigate('setup');
+    go(navigation, 'setup');
   };
 
   const handleDeletePinned = (id, name) => {
@@ -240,7 +241,7 @@ export default function HomeScreen() {
 
   const handleConfigureNew = () => {
     resetSetupConfig(actions);
-    navigation.navigate('setup');
+    go(navigation, 'setup');
   };
 
   return (
@@ -288,7 +289,7 @@ export default function HomeScreen() {
               full-scale amplitude and frequency band accurate.
             </Text>
             <Pressable
-              onPress={() => navigation.navigate('calibration', { fromWelcome: false })}
+              onPress={() => go(navigation, 'calibration', { fromWelcome: false })}
               style={[styles.smallButton, { borderColor: c.warning, alignSelf: 'flex-start' }]}>
               <Text style={{ color: c.warning, fontWeight: '600', fontSize: 13 }}>Recalibrate</Text>
             </Pressable>
@@ -360,7 +361,7 @@ export default function HomeScreen() {
             <View style={[styles.sectionHeaderRow, { marginTop: 8 }]}>
               <Text style={[styles.sectionLabel, { color: c.tx3, marginBottom: 0 }]}>CUSTOM SESSIONS</Text>
               {customSessions.length > HOME_CUSTOM_SESSION_LIMIT && (
-                <Pressable onPress={() => navigation.navigate('customSessions')} hitSlop={8} accessibilityRole="link">
+                <Pressable onPress={() => go(navigation, 'customSessions')} hitSlop={8} accessibilityRole="link">
                   <Text style={{ color: c.info, fontSize: 12, fontWeight: '600' }}>View all ({customSessions.length})</Text>
                 </Pressable>
               )}

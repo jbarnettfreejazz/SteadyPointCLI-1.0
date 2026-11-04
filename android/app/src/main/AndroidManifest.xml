@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
+    <!-- FIFTY-FIFTH follow-up: session foreground service (SessionForegroundService) -
+         keeps BLE readings and sound running with the screen off or another app open. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -30,5 +38,9 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+      <service
+        android:name=".SessionForegroundService"
+        android:exported="false"
+        android:foregroundServiceType="connectedDevice|mediaPlayback" />
     </application>
 </manifest>

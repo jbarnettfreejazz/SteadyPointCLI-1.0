@@ -17,6 +17,7 @@ import CalibrationScreen from '../screens/CalibrationScreen';
 import CalibrationResultsScreen from '../screens/CalibrationResultsScreen';
 import CalibrationSettingsScreen from '../screens/CalibrationSettingsScreen';
 import SonificationSettingsScreen from '../screens/SonificationSettingsScreen';
+import SessionCalibrationScreen from '../screens/SessionCalibrationScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -54,6 +55,9 @@ export default function RootNavigator() {
         {/* THIRTY-FIFTH follow-up: Settings sub-pages */}
         <Stack.Screen name="calibrationSettings" component={CalibrationSettingsScreen} />
         <Stack.Screen name="sonificationSettings" component={SonificationSettingsScreen} />
+        {/* FIFTY-SEVENTH follow-up: Edit Calibration Settings during a session
+            (was a Modal on Recording). Sheet on iOS, full screen on Android. */}
+        <Stack.Screen name="sessionCalibration" component={SessionCalibrationScreen} options={{ presentation: 'modal' }} />
       </Stack.Navigator>
     </NavigationContainer>
   );

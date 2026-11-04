@@ -8,6 +8,7 @@ export const BackHandler = { addEventListener: (ev, fn) => { const l = (globalTh
 export const useFocusEffect = (cb) => { React.useEffect(() => cb(), [cb]); };
 export const useColorScheme = () => globalThis.__scheme || 'light';
 export const SafeAreaView = host('SafeAreaView');
+export const useSafeAreaInsets = () => globalThis.__insets || { top: 0, bottom: 0, left: 0, right: 0 };
 export const useNavigation = () => globalThis.__nav;
 export const useStore = () => globalThis.__store;
 export const startSimilarSession = (args) => { globalThis.__started = args.session; };

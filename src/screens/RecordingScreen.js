@@ -1,20 +1,20 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch, Modal, BackHandler, Platform } from 'react-native';
+import React, { useCallback, useEffect, useRef } from 'react';
+import { View, Text, Pressable, StyleSheet, ScrollView, Dimensions, Switch, BackHandler, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
 import { orbSize, orbRGB, fmt } from '../utils/dsp';
-import { endSession, applyCalibrationDuringSession, noteFeedbackType, pitchRangeFor } from '../services/sessionLogic';
+import { endSession, noteFeedbackType, pitchRangeFor } from '../services/sessionLogic';
 import { onSessionPersisted } from '../services/sessionCheckpoint';
-import CalibrationEditor from '../components/CalibrationEditor';
 import TremorMap from '../components/TremorMap';
 import { setAudioHook, getLiveState } from '../state/liveSession';
 import * as audioService from '../services/audio';
 import { playGuideTrack, stopGuideTrack } from '../services/guideTrackPlayer';
 import Sparkline from '../components/Sparkline';
 import { useKeepAwake } from '@sayem314/react-native-keep-awake';
+import { go } from '../navigation/go';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SPARK_CARD_WIDTH = SCREEN_WIDTH * 0.9;
@@ -132,12 +132,8 @@ export default function RecordingScreen() {
   // THIRTY-SIXTH follow-up: "Edit Calibration Settings" during a continuous
   // session. Saving applies the values to this session right away and saves
   // them as the app's calibration (same as Settings > Calibration).
-  const [calibrationOpen, setCalibrationOpen] = useState(false);
-  const handleCalibrationSave = (patch) => {
-    actions.updateSettings({ ...patch, calibrationSource: 'manual', calibrationSetAt: new Date().toISOString() });
-    applyCalibrationDuringSession(patch);
-    setCalibrationOpen(false);
-  };
+  // FIFTY-SEVENTH follow-up: the editor is now its own screen
+  // (screens/SessionCalibrationScreen.js), pushed over this one.
 
   // FORTY-FIFTH follow-up: in "Pitch follows: Frequency" mode, the number
   // under the ring shows the frequency that actually drives the pitch
@@ -311,7 +307,7 @@ export default function RecordingScreen() {
 
         {isContinuous && (
           <Pressable
-            onPress={() => setCalibrationOpen(true)}
+            onPress={() => go(navigation, 'sessionCalibration')}
             style={[styles.calibrationButton, { backgroundColor: c.bg2, borderColor: c.bd3 }]}
             accessibilityRole="button">
             <Text style={{ color: c.info, fontSize: 14, fontWeight: '600' }}>Edit Calibration Settings</Text>
@@ -381,33 +377,6 @@ export default function RecordingScreen() {
         </Pressable>
       </ScrollView>
 
-      <Modal
-        visible={calibrationOpen}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setCalibrationOpen(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: c.bg1 }}>
-          <ScrollView
-            contentContainerStyle={styles.modalScroll}
-            keyboardShouldPersistTaps="handled"
-            automaticallyAdjustKeyboardInsets>
-            <Text style={{ fontSize: 20, fontWeight: '600', color: c.tx1, marginBottom: 4 }}>Calibration</Text>
-            <Text style={{ fontSize: 13, color: c.tx2, lineHeight: 19, marginBottom: 8 }}>
-              Changes apply to this session right away and are saved as your calibration settings. The session keeps
-              recording while you edit.
-            </Text>
-            {calibrationOpen && (
-              <CalibrationEditor
-                settings={state.settings}
-                onSave={handleCalibrationSave}
-                onCancel={() => setCalibrationOpen(false)}
-                c={c}
-                context="session"
-              />
-            )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -458,7 +427,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
   },
-  modalScroll: { padding: 20, paddingBottom: 40 },
   mapWrap: { width: '94%', marginTop: 10 },
   sevLabel: { fontSize: 18, fontWeight: '700' },
   axisRow: { flexDirection: 'row', gap: 16, marginTop: 24, width: '80%' },

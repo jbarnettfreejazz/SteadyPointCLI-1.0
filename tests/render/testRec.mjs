@@ -1,12 +1,13 @@
 import { build } from 'esbuild'; import plugin from './plugin.mjs';
 await build({ entryPoints: ['entryRec.js'], bundle: true, format: 'esm', platform: 'node', outfile: 'outRec.mjs', plugins: [plugin], loader: { '.js': 'jsx' }, jsx: 'transform', logLevel: 'error', external: ['react', 'react-test-renderer'] });
 const React = (await import('react')).default; const TR = (await import('react-test-renderer')).default; const { act } = TR;
-const { RecordingScreen, HomeScreen, IntensityChart, durationLabel, clockAt, hourTicks, DisconnectedScreen, SR } = await import('./outRec.mjs');
+const { RecordingScreen, HomeScreen, IntensityChart, durationLabel, clockAt, hourTicks, DisconnectedScreen, SR, SessionCalibrationScreen } = await import('./outRec.mjs');
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 let ok = 0, fail = 0; const check = (n, c, x = '') => { if (c) ok++; else { fail++; console.log('FAIL:', n, x); } };
 const texts = (root) => root.findAll((n) => n.type === 'Text' || n.type === 'SvgText').map((n) => [].concat(n.props.children).filter(x => typeof x === 'string' || typeof x === 'number').join('')).join(' | ');
 const press = (root, label) => { const p = root.findAll((n) => n.type === 'Pressable').find((n) => texts({ findAll: (f) => n.findAll(f) }).trim() === label || n.props.accessibilityLabel === label); if (!p) throw new Error('no pressable ' + label); act(() => p.props.onPress()); };
-globalThis.__nav = { navigate() {}, addListener: () => () => {} };
+const navCalls = [];
+globalThis.__nav = { navigate: (...a) => navCalls.push(['navigate', ...a]), goBack: () => navCalls.push(['goBack']), canGoBack: () => true, addListener: () => () => {} };
 globalThis.__live = { elapsed: 125, displayLevel: 30, liveSev: 'Mild', liveFreqHz: 5.2, liveXpct: 50, liveYpct: 40, liveZpct: 10, recentX: Array(100).fill(0), dispX: Array(50).fill(0), dispY: Array(50).fill(0), dispZ: Array(50).fill(0) };
 const settings = { fullScaleG: 0.35, noiseFloorG: 0.006, tremorBandMinHz: 3, tremorBandMaxHz: 14, bandFilterEnabled: false };
 let updates = [];
@@ -16,19 +17,24 @@ const mk = (config) => { updates = []; globalThis.__store = { state: { settings,
 mk({ duration: null, feedbackType: 'visual' });
 let r; act(() => { r = TR.create(React.createElement(RecordingScreen)); }); let t = texts(r.root);
 check('continuous: button under sonification', t.includes('Sonification | Edit Calibration Settings'), t.slice(0, 300));
-const modal = () => r.root.findAll((n) => n.type === 'Modal')[0];
-check('dialog closed initially', modal().props.visible === false && r.root.findAll((n) => n.type === 'TextInput').length === 0);
+// FIFTY-SEVENTH follow-up: the editor is its own screen (was a Modal here)
+check('no dialog on the Recording screen', r.root.findAll((n) => n.type === 'Modal').length === 0 && r.root.findAll((n) => n.type === 'TextInput').length === 0);
 press(r.root, 'Edit Calibration Settings');
-check('dialog open with editor', modal().props.visible === true && r.root.findAll((n) => n.type === 'TextInput').length === 4 && texts(r.root).includes('Changes apply to this session right away'));
-const input = (label) => r.root.findAll((n) => n.type === 'TextInput' && n.props.accessibilityLabel === label)[0];
+check('button opens the session calibration screen', navCalls.some((c) => c[0] === 'navigate' && c[1] === 'sessionCalibration' && c[3]?.pop === true), JSON.stringify(navCalls));
+let ed; act(() => { ed = TR.create(React.createElement(SessionCalibrationScreen)); });
+check('editor screen: note, 4 fields, scrollable, safe area', ed.root.findAll((n) => n.type === 'TextInput').length === 4 && texts(ed.root).includes('Changes apply to this session right away') && ed.root.findAll((n) => n.type === 'ScrollView').length === 1 && ed.root.findAll((n) => n.type === 'SafeAreaView').length === 1);
+const input = (label) => ed.root.findAll((n) => n.type === 'TextInput' && n.props.accessibilityLabel === label)[0];
 act(() => input('Full scale range').props.onChangeText('1'));
-globalThis.__alerts = []; press(r.root, 'Save');
+globalThis.__alerts = []; press(ed.root, 'Save');
 const a = globalThis.__alerts[0];
 check('session confirm wording', a[0] === 'Save calibration?' && a[1].startsWith('Applies right away') && a[1].includes('Earlier readings in this session') && !a[1].includes('Band'), a[1]);
 act(() => a[2][1].onPress());
-check('saved + applied + closed', updates[0].fullScaleG === 1 && updates[0].calibrationSource === 'manual' && globalThis.__applied[0].fullScaleG === 1 && globalThis.__applied[0].bandFilterEnabled === false && modal().props.visible === false, JSON.stringify(updates));
-press(r.root, 'Edit Calibration Settings'); press(r.root, 'Cancel');
-check('cancel closes without applying', modal().props.visible === false && globalThis.__applied.length === 1);
+check('saved + applied + back to the session', updates[0].fullScaleG === 1 && updates[0].calibrationSource === 'manual' && globalThis.__applied[0].fullScaleG === 1 && globalThis.__applied[0].bandFilterEnabled === false && navCalls.at(-1)[0] === 'goBack', JSON.stringify(updates));
+act(() => ed.unmount());
+act(() => { ed = TR.create(React.createElement(SessionCalibrationScreen)); });
+press(ed.root, 'Cancel');
+check('cancel goes back without applying', navCalls.at(-1)[0] === 'goBack' && globalThis.__applied.length === 1);
+act(() => ed.unmount());
 check('feedback noted', (globalThis.__fb || []).includes('visual'));
 // timed: no button
 mk({ duration: 10, feedbackType: 'visual' });
@@ -166,5 +172,6 @@ check('Android: back press consumed (no navigation)', backs()[0].fn() === true);
 act(() => r.unmount());
 check('Android: handler removed on leave', backs().length === 0);
 globalThis.__os = 'ios';
+
 console.log(`${ok} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

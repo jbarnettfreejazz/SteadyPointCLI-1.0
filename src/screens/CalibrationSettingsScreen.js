@@ -8,6 +8,7 @@ import { shareCalibrationLog } from '../services/calibrationLogger';
 import { dateFromIso } from '../utils/analyticsStats';
 import { CALIBRATION_FIELDS, CALIBRATION_DEFAULTS, formatValue, formatCeiling } from '../utils/calibrationLimits';
 import CalibrationEditor from '../components/CalibrationEditor';
+import { go } from '../navigation/go';
 
 // THIRTY-FIFTH follow-up: Settings > Calibration sub-page (was the "Tremor
 // Measurement" part of the main Settings page). Shows the four calibration
@@ -175,11 +176,11 @@ export default function CalibrationSettingsScreen() {
                 tremor for a few seconds. Saving its results turns band filtering on.
               </Text>
               <Pressable
-                onPress={() => navigation.navigate('calibration', { fromWelcome: false })}
+                onPress={() => go(navigation, 'calibration', { fromWelcome: false })}
                 style={[styles.button, styles.fullButton, { borderColor: c.info }]}
                 accessibilityRole="button">
                 <Text style={{ color: c.info, fontWeight: '600' }}>
-                  {settings.lastCalibratedAt ? 'Recalibrate' : 'Open Calibration'}
+                  {settings.lastCalibratedAt ? 'Recalibrate' : 'Calibrate' /* FIFTY-FIFTH follow-up: was 'Open Calibration' */}
                 </Text>
               </Pressable>
               <Pressable

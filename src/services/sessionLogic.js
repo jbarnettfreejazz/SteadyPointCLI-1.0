@@ -7,6 +7,8 @@ import { stopGuideTrack } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
 import { buildSessionRecord, RESUME_WINDOW_MIN } from '../utils/sessionRecord';
 import * as checkpoint from './sessionCheckpoint';
+import { go } from '../navigation/go';
+import { startSessionService, stopSessionService } from './sessionService';
 
 const ICON_MAP = {
   meditative: { icon: 'brain', iconBg: 'bgInfo', iconColor: 'info' },
@@ -18,7 +20,7 @@ const ICON_MAP = {
 // screen — return to whichever one the user came from.
 function goBackOrHome(navigation) {
   if (navigation.canGoBack()) navigation.goBack();
-  else navigation.navigate('home');
+  else go(navigation, 'home');
 }
 
 // TWENTY-FOURTH follow-up: where the current session was started from —
@@ -357,6 +359,9 @@ export function startSession({ state, actions, navigation, overrides, origin = '
   };
   if (activeSession.persist) startCheckpointFor(activeSession, { fresh: true });
   sendCommand('START');
+  // FIFTY-FIFTH follow-up: Android keeps the app running for the session
+  // (screen off / other apps). Not in demo mode (no device, nothing to keep alive).
+  if (activeSession.persist) startSessionService(effective.config);
 
   const totalSeconds = activeSession.totalSeconds;
   live.startTimers({
@@ -364,7 +369,7 @@ export function startSession({ state, actions, navigation, overrides, origin = '
     onComplete: (secs) => endSession({ state: effective, actions, navigation, secs, byTimer: true }),
   });
 
-  navigation.navigate('recording');
+  go(navigation, 'recording');
 }
 
 function startCheckpointFor(session, opts) {
@@ -453,6 +458,7 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   // re-registers this on next mount, so this doesn't affect future sessions.
   live.setAudioHook(null);
   stopGuideTrack();
+  stopSessionService(); // FIFTY-FIFTH follow-up: every way a session ends (button, timer, disconnect)
 
   const session = activeSession || {
     startedAtMs: Date.now() - (secs || 0) * 1000,
@@ -507,9 +513,9 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   if (disconnected) {
     // Skip the normal Session Complete screen — the user needs to know
     // *why* the session stopped, not see a celebratory summary.
-    navigation.navigate('disconnected');
+    go(navigation, 'disconnected');
   } else {
-    navigation.navigate('summary');
+    go(navigation, 'summary');
     setTimeout(() => actions.setScoreAnim(true), 450);
   }
 }
@@ -622,12 +628,13 @@ export async function resumeSession({ state, actions, navigation }) {
   startCheckpointFor(activeSession, { carry: { chunkCount: m.chunkCount || 0, savedReadings: n } });
 
   sendCommand('START');
+  startSessionService(activeSession.config); // FIFTY-FIFTH follow-up
   const effective = { ...state, config: { ...state.config, ...m.config } };
   live.startTimers({
     totalSeconds: activeSession.totalSeconds,
     onComplete: (secs) => endSession({ state: effective, actions, navigation, secs, byTimer: true }),
   });
-  navigation.navigate('recording');
+  go(navigation, 'recording');
   return true;
 }
 

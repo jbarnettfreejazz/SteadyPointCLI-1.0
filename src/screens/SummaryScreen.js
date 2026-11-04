@@ -20,6 +20,8 @@ import IntensityChart from '../components/IntensityChart';
 import { persistSave } from '../services/persistence';
 import { saveSetupAsCustomSession } from '../services/sessionLogic';
 import { describeCustomSession } from '../utils/customSessions';
+import { go } from '../navigation/go';
+import ModalSafeArea from '../components/ModalSafeArea';
 
 export default function SummaryScreen() {
   const c = useTheme();
@@ -42,7 +44,7 @@ export default function SummaryScreen() {
   // endSession() in sessionLogic.js, driving the ring's fill-in.
 
   if (!r) {
-    navigation.navigate('home');
+    go(navigation, 'home');
     return null;
   }
 
@@ -104,7 +106,7 @@ export default function SummaryScreen() {
       const nextAllSessions = state.allSessions.map((s) => (s.id === r.sessionId ? { ...s, note: trimmed } : s));
       await persistSave({ ...state, allSessions: nextAllSessions });
     }
-    navigation.navigate('home');
+    go(navigation, 'home');
   };
 
   return (
@@ -201,7 +203,7 @@ export default function SummaryScreen() {
           the input in its own screen with the field pinned near the TOP
           gives it room the keyboard can never reach. */}
       <Modal visible={noteModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={cancelNoteDraft}>
-        <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
+        <ModalSafeArea style={[styles.container, { backgroundColor: c.bg1 }]}>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <View style={styles.modalHeader}>
               <Pressable onPress={cancelNoteDraft} hitSlop={8}>
@@ -223,7 +225,7 @@ export default function SummaryScreen() {
               style={[styles.modalTextarea, { color: c.tx1, backgroundColor: c.bg1 }]}
             />
           </KeyboardAvoidingView>
-        </SafeAreaView>
+        </ModalSafeArea>
       </Modal>
 
       {/* Name entry for "Save as custom session" — its own sheet with the
@@ -233,7 +235,7 @@ export default function SummaryScreen() {
         animationType="slide"
         presentationStyle="pageSheet"
         onRequestClose={() => setSaveModalVisible(false)}>
-        <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
+        <ModalSafeArea style={[styles.container, { backgroundColor: c.bg1 }]}>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <View style={styles.modalHeader}>
               <Pressable onPress={() => setSaveModalVisible(false)} hitSlop={8}>
@@ -265,7 +267,7 @@ export default function SummaryScreen() {
               )}
             </View>
           </KeyboardAvoidingView>
-        </SafeAreaView>
+        </ModalSafeArea>
       </Modal>
     </SafeAreaView>
   );
