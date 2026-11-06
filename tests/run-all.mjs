@@ -8,7 +8,7 @@ import path from 'node:path';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SUITES = {
   // build steps first (bundle the app code with mocks), then the tests
-  logic: ['bundle.mjs', 'b3.mjs', 'test.mjs', 'test2.mjs', 'test3.mjs', 'test5.mjs', 'test6.mjs', 'test7.mjs', 'test8.mjs', 'test9.mjs', 'test10.mjs', 'test11.mjs', 'test12.mjs', 'test13.mjs'],
+  logic: ['bundle.mjs', 'b3.mjs', 'test.mjs', 'test2.mjs', 'test3.mjs', 'test5.mjs', 'test6.mjs', 'test7.mjs', 'test8.mjs', 'test9.mjs', 'test10.mjs', 'test11.mjs', 'test12.mjs', 'test13.mjs', 'test14.mjs', 'test15.mjs'],
   render: ['build.mjs', 'test.mjs', 'testHome.mjs', 'testDS.mjs', 'testSet.mjs', 'testApp.mjs', 'testCal.mjs', 'testRec.mjs', 'testQuick.mjs', 'testRes.mjs', 'testHist.mjs', 'testWelcome.mjs'],
   cal: ['test.mjs'],
   dsp: ['freq.mjs'],

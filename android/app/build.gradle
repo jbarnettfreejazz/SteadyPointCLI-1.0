@@ -82,8 +82,13 @@ android {
         applicationId "com.kaivo.steadypoint" // FIFTY-SECOND follow-up: matches the iOS bundle ID; namespace stays com.steadypointcli (the Kotlin package)
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // FIFTY-NINTH follow-up: set in android/gradle.properties
+        // (steadypointVersionName / steadypointVersionCode) — keep them the
+        // same as the iOS Version and Build in Xcode. Shown at the bottom of
+        // Settings as "SteadyPoint Version <name> (<code>)". Google Play needs
+        // a higher versionCode for every upload.
+        versionCode((project.findProperty('steadypointVersionCode') ?: '1').toString().toInteger())
+        versionName((project.findProperty('steadypointVersionName') ?: '1.0').toString())
     }
     signingConfigs {
         debug {

@@ -1,4 +1,4 @@
-# SteadyPoint — handoff note (Oct 31, 2026)
+# SteadyPoint — handoff note (Nov 5, 2026)
 
 React Native 0.81.6 app (old architecture; upgraded from 0.75.4 in the
 Fifty-fourth follow-up — do not go past 0.81.x, see README) (repo root), on iOS and — since the Fifty-second
@@ -34,19 +34,33 @@ window, then goes about his day waiting for audio nudges. The **tremor
 map** on the Recording screen shows the settings box, the in-band reading
 (filled dot), the actual/dominant reading (hollow dot) and a 60 s trail.
 
+## Device-tested OK (recent rounds)
+
+- 51st: crash fix with sound on (long sound-on sessions passed on iOS).
+- 52nd: Android round 1 (samples, back guard, log share, app ID/name).
+- 54th: RN 0.81.6 on both platforms (iOS regression list passed, TestFlight
+  build made; Android release APK path documented).
+- 55th: Android session foreground service + notification; "Calibrate" label.
+- 57th: Edit Calibration during a session as a screen (Android + iOS).
+
 ## Waiting on device testing
 
-1. **Crash fix (51st)** — app crashed after 0.5–1.5 min with sound on:
-   a thread race in react-native-audio-api 0.4.18 `AudioParam` (JS thread
-   schedules while the audio thread pops the event deque). Fixed by a
-   mutex (audio thread try-locks) in `patches/react-native-audio-api+0.4.18.patch`
-   (combined with the earlier AudioPlayer patch). Applying it needs
-   `rm -rf node_modules/react-native-audio-api && npm install`, then
-   `grep -c "SteadyPoint patch" node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp`
-   → 8, then Clean Build Folder. Applied in the local directory; James was
-   archiving the TestFlight build (hit the `.xcodeproj` vs `.xcworkspace`
-   modulemap error — open the workspace). Confirm multi-minute sound
-   sessions no longer crash.
+1. **Android audio recovery (58th)** — during a sound-on session: connect a
+   Bluetooth speaker, disconnect it, plug/unplug headphones → sound
+   continues on the new output each time (logcat "SteadyPoint audio:
+   output changed; stream reopened"); a phone call (incoming and outgoing)
+   and a video call → SteadyPoint goes quiet and the guide track pauses,
+   both resume after hanging up; music/podcasts from another app keep
+   playing alongside SteadyPoint (mixing); after End Session, a call ending
+   doesn't bring sound back; guide track pick/play/stop on Android.
+
+1b. **Guide-track names + Android version (59th)** — on Android, pick and play
+   a guide track with "#" in its name (e.g. "Cello Suite #1….m4a"); it plays
+   and shows its original name; a pinned session saved earlier with a "#"
+   name now plays; iOS guide tracks still play. Settings shows "SteadyPoint
+   Version <steadypointVersionName> (<steadypointVersionCode>)" from
+   android/gradle.properties (set them to match iOS).
+
 2. **Tremor map, strict band edges, upper limit, Frequency default (50th)**
    — test list given in chat: rest; in-band shake; slow sway; 3.5 Hz with a
    4–8 Hz band (should now be silent); above band; sway + in-band shake;
@@ -55,51 +69,22 @@ map** on the Recording screen shows the settings box, the in-band reading
    new session starts with an empty trail.
    Note: Settings > Sonification > Pitch follows defaults to Frequency only
    on fresh installs; the map and numbers show in both modes.
-3. **Android round 1 (52nd)** — on the Samsung: sample voices (cello,
-   viola, violin) audible from the first session; connect works (Metro
-   log shows `[ble] MTU …`) and calibration readings look normal; back button does
-   nothing on Recording, works on Summary and elsewhere; Share calibration
-   log opens the share sheet with the log text; app shows as
-   "SteadyPoint". Plus a general first pass (wizard incl. Use default values — now reachable by
-   scrolling on the Samsung, timed and
-   continuous sessions, guide track, analytics, resume after disconnect).
+   (Not explicitly confirmed after later rounds.)
 
 ## Android plan (agreed)
 
 Round 1 done (52nd) and device-tested OK. Android icon done (53rd).
 RN 0.81.6 upgrade (Phase 2) done (54th) and device-tested on both platforms.
-Session foreground service done (55th) — waiting on device testing. Next, ask before each: audio output change + audio focus recovery (patch to the
-library's Android Oboe player); then the RN upgrade Google Play requires
-(target API 36, 16 KB pages — also affects iOS and the 0.4.18 pin).
-Google Play Console account not created yet; organization vs personal
-account still to decide (Play lists medical apps as organization-only).
-
-4. **RN 0.81.6 upgrade (54th)** — first get both native builds through
-   (paste errors). Then iOS regression before any TestFlight: long
-   sound-on sessions (old crash window), background audio, Bluetooth
-   speaker switch mid-session, phone-call interruption, guide track,
-   calibration wizard, history/analytics, navigation (Summary → Home,
-   Session Detail → back, resume after disconnect), and install over the
-   current TestFlight build keeps saved sessions. Android: same, plus
-   edge-to-edge layout (status/nav bars, light + dark mode) and the back
-   gesture on Recording.
-
-5. **Android foreground service + "Calibrate" label (55th)** — Settings >
-   Calibration shows "Calibrate" until a wizard calibration, then
-   "Recalibrate". On the Samsung: first session start asks for
-   notifications once (allow); the "SteadyPoint session in progress"
-   notification shows during sessions and disappears at the end (button,
-   timer, disconnect); a continuous session keeps recording and sounding
-   with the screen off (power button) and in another app for 10+ minutes;
-   tapping the notification returns to the session; resume after a
-   disconnect brings the notification back; declining the permission on a
-   fresh install still lets sessions run (no notification shown).
-
-6. **Edit Calibration during a session is a screen (57th; replaces the 56th
-   attempt)** — Android: Cancel/Save reachable by scrolling without editing
-   first, above the navigation bar; back/Cancel return to the running
-   session (clock, sound and notification continue); Save applies to the
-   session. iOS: still opens as a sheet, swipe down or Cancel closes it.
+Session foreground service (55th) and session calibration screen (57th)
+device-tested OK. Android audio recovery (58th) — waiting on device testing.
+Guide-track file names + Android version in Settings (59th) — waiting on
+device testing. Phase 3 complete after that; next is Phase 4 (Play release;
+personal Play account; Android version numbers to match iOS — set in
+android/gradle.properties since the 59th).
+Google Play: the user is creating a **personal** developer account (needs a
+closed test with 12+ testers for 14 days before going public). Play lists
+medical apps as organization-only, so the listing and health declaration
+should present SteadyPoint as wellness/biofeedback, not diagnosis.
 
 ## Ideas discussed, not started (ask before doing)
 

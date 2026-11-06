@@ -7,6 +7,7 @@ import { useStore } from '../state/StoreContext';
 import DeviceInfo from 'react-native-device-info';
 import { VOICE_OPTIONS } from './SonificationSettingsScreen';
 import { formatValue } from '../utils/calibrationLimits';
+import { go } from '../navigation/go';
 
 // THIRTY-FIFTH follow-up: the main Settings page is now a short menu —
 // Calibration and Sonification each open their own sub-page
@@ -68,20 +69,22 @@ export default function SettingsScreen() {
             first
             title="Calibration"
             subtitle={calibrationSummary}
-            onPress={() => navigation.navigate('calibrationSettings')}
+            onPress={() => go(navigation, 'calibrationSettings')}
             c={c}
           />
           <MenuRow
             title="Sonification"
             subtitle={sonificationSummary}
-            onPress={() => navigation.navigate('sonificationSettings')}
+            onPress={() => go(navigation, 'sonificationSettings')}
             c={c}
           />
         </View>
 
         {/* THIRTY-FOURTH follow-up: app version and build number, read from
             the iOS bundle (CFBundleShortVersionString / CFBundleVersion — the
-            Version and Build set in Xcode, i.e. what TestFlight shows). */}
+            Version and Build set in Xcode, i.e. what TestFlight shows).
+            Android (FIFTY-NINTH follow-up): versionName / versionCode, set in
+            android/gradle.properties to match iOS. */}
         <Text style={{ fontSize: 12, color: c.tx3, textAlign: 'center', marginTop: 24, marginBottom: 24 }}>
           SteadyPoint {appVersionLabel()}
         </Text>

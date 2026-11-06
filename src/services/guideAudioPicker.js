@@ -35,6 +35,19 @@ function ensureExtension(name, mimeType) {
   return `${name || 'guide-audio'}.${ext}`;
 }
 
+// FIFTY-NINTH follow-up: the saved copy's name avoids characters that mean
+// something in a file:// URL — "#" (fragment), "?" (query), "%" (escape) —
+// so a name like "Cello Suite #1.m4a" can't break playback on either
+// platform. "#" reads naturally as "No." ("Suite No.1"); "?" and "%" become
+// "_". Only the saved copy is renamed: the name shown in the app is the
+// original (pickGuideAudioFile returns it as `name`).
+export function safeStoredName(name) {
+  return String(name)
+    .replace(/#\s*/g, 'No.')
+    .replace(/[?%]/g, '_')
+    .replace(/[\u0000-\u001f\/\\]/g, '_');
+}
+
 async function ensureGuideAudioDir() {
   const exists = await RNFS.exists(GUIDE_AUDIO_DIR);
   if (!exists) await RNFS.mkdir(GUIDE_AUDIO_DIR);
@@ -52,7 +65,7 @@ export async function pickGuideAudioFile() {
   }
 
   const result = results[0];
-  const safeFileName = ensureExtension(result.name, result.type);
+  const safeFileName = safeStoredName(ensureExtension(result.name, result.type));
   console.log('pickGuideAudioFile: picked', {
     name: result.name,
     type: result.type,

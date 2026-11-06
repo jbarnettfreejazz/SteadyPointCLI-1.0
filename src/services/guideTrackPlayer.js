@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import Sound from 'react-native-sound';
 import { resolveGuideAudioPath } from './guideAudioPicker';
 
@@ -27,7 +28,19 @@ import { resolveGuideAudioPath } from './guideAudioPicker';
 // got re-escaped into "%2520"), pointing at a path that doesn't exist —
 // which is exactly what produced the generic "unsupported file type" error
 // even though the file itself was fine.
+//
+// FIFTY-NINTH follow-up (Android): the path is passed WITHOUT "file://".
+// Android's MediaPlayer reads a file:// string as a URI, so a "#" in the
+// file name ("Cello Suite #1.m4a") started a URI fragment and cut the path
+// short -> "resource not found". A plain absolute path is opened as-is, any
+// characters included. iOS keeps the file:// form above (RNSound.m escapes
+// it). See guideTrackSource().
 // ══════════════════════════════════════════════════════
+
+// What to hand react-native-sound for an absolute path on this platform.
+export function guideTrackSource(absPath, os = Platform.OS) {
+  return os === 'android' ? absPath : 'file://' + absPath;
+}
 
 Sound.setCategory('Playback'); // audible even if the phone's silent switch is on — matches a guided-session use case
 
@@ -38,7 +51,7 @@ export function playGuideTrack(fileName) {
 
   const absPath = resolveGuideAudioPath(fileName);
   if (!absPath) return;
-  const fileUrl = 'file://' + absPath;
+  const fileUrl = guideTrackSource(absPath);
 
   const sound = new Sound(fileUrl, undefined, (error) => {
     if (error) {
@@ -57,7 +70,27 @@ export function playGuideTrack(fileName) {
   currentSound = sound;
 }
 
+// FIFTY-EIGHTH follow-up: paused during a phone/video call (Android call
+// monitor, via sessionLogic) and resumed from the same point afterwards.
+let pausedForCall = false;
+
+export function pauseGuideTrackForCall() {
+  if (!currentSound || pausedForCall) return;
+  pausedForCall = true;
+  currentSound.pause();
+}
+
+export function resumeGuideTrackAfterCall() {
+  if (!pausedForCall) return;
+  pausedForCall = false;
+  if (!currentSound) return; // ended or stopped during the call
+  currentSound.play((success) => {
+    if (!success) console.warn('playGuideTrack: playback did not complete successfully');
+  });
+}
+
 export function stopGuideTrack() {
+  pausedForCall = false;
   if (currentSound) {
     const sound = currentSound;
     currentSound = null;

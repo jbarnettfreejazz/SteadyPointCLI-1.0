@@ -3358,6 +3358,92 @@ the note and four fields in a ScrollView/SafeAreaView; Save confirms,
 saves, applies and goes back; Cancel goes back without applying. The 56th
 follow-up's modal-padding checks were removed with the Modal. 534 passed.
 
+## Fifty-eighth follow-up — Android audio recovery: output changes and calls
+
+End of Phase 3 (Android parity). Decided with the user: other apps' audio
+keeps **mixing** with SteadyPoint (no audio focus taken — music/podcasts
+keep playing, as before); SteadyPoint goes **quiet during calls**.
+
+**Output device changes** (Bluetooth speaker connected, headphones unplugged,
+call routing) — the Android counterpart of the Nineteenth follow-up.
+react-native-audio-api 0.4.18's Android `AudioPlayer` (Oboe) had no error
+callback: when Android disconnects the output stream on a route change,
+nothing reopened it and sonification stayed silent for the rest of the
+session. The audio-api patch now makes `AudioPlayer` an
+`AudioStreamErrorCallback`: in `onErrorAfterClose(ErrorDisconnected)` it
+opens a new stream with the same settings at the **same sample rate** (the
+audio graph was built for it; Oboe converts for the new device) and restarts
+it if the context was running — left paused if suspended between sessions,
+so a route change while idle doesn't wake the engine. A mutex guards the
+stream; `stop()` closes the old stream outside the lock (close can wait for
+Oboe's error thread); the disconnected stream is kept alive past its own
+callback. Logcat tag `SteadyPoint audio` ("output changed; stream reopened
+at … Hz"). Stream opening moved into one `openStream()` helper. Compiled
+here against Oboe 1.9.3 headers with libc++ 18 and `-Wall`, clean.
+
+**Calls** (Android 12+). `SessionServiceModule.kt` gains
+`startCallMonitor()` / `stopCallMonitor()`: an
+`AudioManager.OnModeChangedListener` (no permission; doesn't affect other
+apps) treats any audio mode other than NORMAL — ringing, phone call,
+video/VoIP call — as "in a call" and emits `SteadyPointCallState { inCall,
+mode }` (plus the `addListener`/`removeListeners` stubs NativeEventEmitter
+needs). `sessionService.js` starts the monitor with the session service,
+stops it with it, and routes events to a handler set by `sessionLogic`
+(`onCallStateChange`): in a call → `setCallMuted(true)` (audio.js) and
+`pauseGuideTrackForCall()`; call ended → unmute and
+`resumeGuideTrackAfterCall()` (react-native-sound resumes from the same
+point). `audio.js`: the master gain is up only while sonification is on
+(`unmuteAudio` … `silenceAudio`, tracked as `masterOn`) **and** no call is
+in progress — so a call ending never brings sound back after the session
+ended or with sound off, and turning sound on during a call stays quiet
+until it ends. `initAudio` goes through the same rule (unchanged level when
+there's no call). Below Android 12 nothing changes (sound plays through
+calls, as before). iOS: unchanged (its own interruption handling, 19th).
+
+Tests: `test14.mjs` (new) — audio.js master gain across sound on/off and
+call start/end, including a call ending after the session ended;
+`test13.mjs` — monitor started after the service and stopped before it,
+call events reach the handler, one subscription across sessions, handler
+cleared, a throwing handler contained, iOS has no monitor; `test8.mjs` — a
+call mid-session mutes and pauses the guide, the end restores both,
+ending the session clears the handler. 552 passed.
+
+## Fifty-ninth follow-up — guide-track file names on Android; Android version in Settings
+
+**Problem.** On Android a guide track named "1-01 Bach_ Cello Suite #1 In G,
+BWV 1007 - 1. Prelude.m4a" (from Google Drive) was picked and saved fine but
+didn't play: "playGuideTrack failed to load: resource not found". The same
+file plays on iPhone, and the same file renamed without "#" plays on Android.
+Not the .m4a format: react-native-sound's Android code hands a `file://…`
+string to MediaPlayer.setDataSource(), which parses it as a URI, so "#"
+started a fragment and the path stopped at "Cello Suite ".
+
+**Fix 1 — `guideTrackPlayer.js`.** New `guideTrackSource(absPath)`: on
+Android the plain absolute path (react-native-sound's plain-path branch;
+MediaPlayer opens it as-is, any characters included); on iOS `file://` +
+path, as before (RNSound.m escapes it). Guide tracks already saved with "#"
+in their name play again without being picked again.
+
+**Fix 2 — `guideAudioPicker.js`.** New `safeStoredName(name)`: the saved
+copy's file name turns "#" into "No." ("Suite #1" → "Suite No.1") and "?",
+"%", slashes and control characters into "_", so URL-special characters
+can't break playback on either platform. The name shown in the app is the
+original.
+
+**Android version in Settings.** The bottom of Settings already showed
+"SteadyPoint Version x (y)" on both platforms (react-native-device-info:
+iOS Version/Build; Android versionName/versionCode), but Android's were fixed
+at 1.0 (1) in `android/app/build.gradle`. They now come from
+`android/gradle.properties` — `steadypointVersionName` /
+`steadypointVersionCode` — set to match the iOS Version and Build in Xcode.
+Raise the code for every build given to testers; Google Play rejects a code it
+has already seen.
+
+Tests: `test15.mjs` (new) — Android plain path / iOS file://; # ? % / \
+cleaned, ordinary names untouched; a picked "#1" file is saved and played
+under the cleaned name with the original shown; an old "#" name still plays
+on Android. 566 passed.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

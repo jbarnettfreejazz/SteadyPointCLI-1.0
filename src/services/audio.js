@@ -680,8 +680,30 @@ export function setActiveVoice(name) {
   activeVoiceName = VOICE_CONFIG[name] ? name : 'cello';
 }
 
+// FIFTY-EIGHTH follow-up: quiet during phone/video calls (Android). The
+// master gain is up only while sonification is on (unmuteAudio, until
+// silenceAudio) AND no call is in progress — so a call ending never brings
+// sound back after the session ended or with sound switched off, and
+// switching sound on during a call stays quiet until the call ends.
+let masterOn = false;
+let callMuted = false;
+
+function applyMasterGain() {
+  if (masterGain) masterGain.gain.value = masterOn && !callMuted ? MASTER_GAIN_LEVEL : 0;
+}
+
 export function unmuteAudio() {
-  if (masterGain) masterGain.gain.value = MASTER_GAIN_LEVEL;
+  masterOn = true;
+  applyMasterGain();
+}
+
+// Called by sessionLogic with the Android call monitor's state
+// (services/sessionService.js). iOS never calls it.
+export function setCallMuted(on) {
+  if (callMuted === !!on) return;
+  callMuted = !!on;
+  console.log('[sonification:call]', callMuted ? 'muted for call' : 'call ended', 'at', Date.now());
+  applyMasterGain();
 }
 
 // EIGHTEENTH follow-up: background audio. Info.plist now declares the
@@ -1067,7 +1089,8 @@ export function initAudio() {
   audioCtx = new AudioContext();
 
   masterGain = audioCtx.createGain();
-  masterGain.gain.value = MASTER_GAIN_LEVEL;
+  masterOn = true; // FIFTY-EIGHTH follow-up: same level as before unless a call is in progress
+  applyMasterGain();
   masterGain.connect(audioCtx.destination);
 
   // TWENTY-SECOND follow-up: all three strings are multi-sampled
@@ -1423,6 +1446,7 @@ export function silenceAudio() {
   // setValueAtTime() calls above, independent of whatever is occasionally
   // dropping those. It's unmuted again at the start of the next session
   // (see unmuteAudio(), called from sessionLogic.js's startSession()).
+  masterOn = false; // FIFTY-EIGHTH follow-up: see applyMasterGain()
   if (masterGain) masterGain.gain.value = 0; // reversed by unmuteAudio() below
   // TWENTY-FIRST/SECOND follow-ups: disconnect every string zone so no
   // pitch-shifter keeps running between sessions.

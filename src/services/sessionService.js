@@ -1,4 +1,4 @@
-import { NativeModules, Platform, PermissionsAndroid } from 'react-native';
+import { NativeModules, NativeEventEmitter, Platform, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ══════════════════════════════════════════════════════
@@ -25,6 +25,35 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // ══════════════════════════════════════════════════════
 
 export const NOTIFICATION_ASKED_KEY = 'steadypoint.notificationPermissionAsked';
+export const CALL_STATE_EVENT = 'SteadyPointCallState';
+
+// FIFTY-EIGHTH follow-up: phone/video calls (Android 12+). The native module
+// watches the phone's audio mode while a session runs (startCallMonitor,
+// started with the service, stopped with it) and reports { inCall }; the
+// handler set by sessionLogic quiets the sound and pauses the guide track
+// until the call ends. Other apps' audio is not affected (it keeps mixing).
+let callHandler = null;
+let callSubscription = null;
+
+export function onCallStateChange(handler) {
+  callHandler = handler || null;
+}
+
+function ensureCallSubscription(mod) {
+  if (callSubscription) return;
+  try {
+    const emitter = new NativeEventEmitter(mod);
+    callSubscription = emitter.addListener(CALL_STATE_EVENT, (e) => {
+      try {
+        callHandler?.(!!e?.inCall);
+      } catch (err) {
+        console.warn('[sessionService] call handler:', err?.message || err);
+      }
+    });
+  } catch (e) {
+    console.warn('[sessionService] call events unavailable:', e?.message || e);
+  }
+}
 
 let queue = Promise.resolve();
 
@@ -58,12 +87,19 @@ export function startSessionService(config) {
     } catch (e) {
       console.warn('[sessionService] notification permission:', e?.message || e);
     }
+    let started = false;
     try {
-      return !!(await mod.start(text));
+      started = !!(await mod.start(text));
     } catch (e) {
       console.warn('[sessionService] start failed:', e?.message || e);
-      return false;
     }
+    try {
+      ensureCallSubscription(mod);
+      await mod.startCallMonitor?.();
+    } catch (e) {
+      console.warn('[sessionService] call monitor:', e?.message || e);
+    }
+    return started;
   });
   return queue;
 }
@@ -72,6 +108,11 @@ export function stopSessionService() {
   const mod = nativeModule();
   if (!mod) return Promise.resolve(false);
   queue = queue.then(async () => {
+    try {
+      await mod.stopCallMonitor?.();
+    } catch (e) {
+      console.warn('[sessionService] call monitor stop:', e?.message || e);
+    }
     try {
       return !!(await mod.stop());
     } catch (e) {
@@ -85,4 +126,6 @@ export function stopSessionService() {
 // Tests only.
 export function __resetForTests() {
   queue = Promise.resolve();
+  callHandler = null;
+  callSubscription = null;
 }

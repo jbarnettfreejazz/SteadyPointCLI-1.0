@@ -168,6 +168,19 @@ check('3 h: duration', rec.duration >= 180 && rec.duration <= 182, rec.duration)
 await flushQ(); await cp.onSessionPersisted(); await flushQ();
 check('3 h: checkpoint cleared', storedKeys().length === 0, storedKeys().length);
 
+// FIFTY-EIGHTH follow-up: a call during a session quiets the sound and pauses the guide track
+globalThis.__call = []; globalThis.__callHandler = undefined;
+logic.startSession({ state, actions, navigation: nav, origin: 'quickStart', overrides: { config: { activityType: 'engaged', feedbackType: 'audio', duration: null, activityNote: '' } } });
+check('call handler set at session start', typeof globalThis.__callHandler === 'function');
+run(5, 0.05);
+globalThis.__callHandler(true);
+check('call start: sound muted, guide paused', JSON.stringify(globalThis.__call) === JSON.stringify([['mute', true], ['guidePause']]), JSON.stringify(globalThis.__call));
+globalThis.__callHandler(false);
+check('call end: sound back, guide resumed', JSON.stringify(globalThis.__call.slice(2)) === JSON.stringify([['mute', false], ['guideResume']]), JSON.stringify(globalThis.__call));
+logic.endSession({ state, actions, navigation: nav, secs: live.getLiveState().elapsed });
+await flushQ();
+check('session end: handler cleared, call mute reset', globalThis.__callHandler === null && JSON.stringify(globalThis.__call.at(-1)) === JSON.stringify(['mute', false]));
+
 // FIFTY-FIFTH follow-up: demo mode (no device) doesn't start the session service
 globalThis.__svc = [];
 const demoState = { ...state, appMode: 'demo' };

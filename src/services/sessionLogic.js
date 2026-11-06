@@ -2,13 +2,21 @@ import { Alert } from 'react-native';
 import * as live from '../state/liveSession';
 import { sendCommand } from './ble';
 import { persistSave } from './persistence';
-import { silenceAudio, setActiveVoice, setCustomTonalRange, unmuteAudio, setPitchMode, setPitchRange } from './audio';
-import { stopGuideTrack } from './guideTrackPlayer';
+import { silenceAudio, setActiveVoice, setCustomTonalRange, unmuteAudio, setPitchMode, setPitchRange, setCallMuted } from './audio';
+import { stopGuideTrack, pauseGuideTrackForCall, resumeGuideTrackAfterCall } from './guideTrackPlayer';
 import { deleteGuideAudioFile } from './guideAudioPicker';
 import { buildSessionRecord, RESUME_WINDOW_MIN } from '../utils/sessionRecord';
 import * as checkpoint from './sessionCheckpoint';
 import { go } from '../navigation/go';
-import { startSessionService, stopSessionService } from './sessionService';
+import { startSessionService, stopSessionService, onCallStateChange } from './sessionService';
+
+// FIFTY-EIGHTH follow-up: Android call monitor (sessionService) -> quiet the
+// sound and pause the guide track during a phone/video call, resume after.
+function handleCallState(inCall) {
+  setCallMuted(inCall);
+  if (inCall) pauseGuideTrackForCall();
+  else resumeGuideTrackAfterCall();
+}
 
 const ICON_MAP = {
   meditative: { icon: 'brain', iconBg: 'bgInfo', iconColor: 'info' },
@@ -361,7 +369,10 @@ export function startSession({ state, actions, navigation, overrides, origin = '
   sendCommand('START');
   // FIFTY-FIFTH follow-up: Android keeps the app running for the session
   // (screen off / other apps). Not in demo mode (no device, nothing to keep alive).
-  if (activeSession.persist) startSessionService(effective.config);
+  if (activeSession.persist) {
+    onCallStateChange(handleCallState);
+    startSessionService(effective.config);
+  }
 
   const totalSeconds = activeSession.totalSeconds;
   live.startTimers({
@@ -459,6 +470,8 @@ export function endSession({ state, actions, navigation, secs, byTimer = false, 
   live.setAudioHook(null);
   stopGuideTrack();
   stopSessionService(); // FIFTY-FIFTH follow-up: every way a session ends (button, timer, disconnect)
+  onCallStateChange(null); // FIFTY-EIGHTH follow-up
+  setCallMuted(false); // sound stays off anyway (silenceAudio above); ready for the next session
 
   const session = activeSession || {
     startedAtMs: Date.now() - (secs || 0) * 1000,
@@ -628,6 +641,7 @@ export async function resumeSession({ state, actions, navigation }) {
   startCheckpointFor(activeSession, { carry: { chunkCount: m.chunkCount || 0, savedReadings: n } });
 
   sendCommand('START');
+  onCallStateChange(handleCallState); // FIFTY-EIGHTH follow-up
   startSessionService(activeSession.config); // FIFTY-FIFTH follow-up
   const effective = { ...state, config: { ...state.config, ...m.config } };
   live.startTimers({
