@@ -1,4 +1,4 @@
-# SteadyPoint — handoff note (Nov 5, 2026)
+# SteadyPoint — handoff note (Nov 9, 2026)
 
 React Native 0.81.6 app (old architecture; upgraded from 0.75.4 in the
 Fifty-fourth follow-up — do not go past 0.81.x, see README) (repo root), on iOS and — since the Fifty-second
@@ -71,6 +71,16 @@ map** on the Recording screen shows the settings box, the in-band reading
    on fresh installs; the map and numbers show in both modes.
    (Not explicitly confirmed after later rounds.)
 
+1b2. **Background sound on Android (61st)** — sound-on session with the
+   screen off, and with another app in front: shake / rest / shake → the
+   sound follows each time; a timed session ends on time in the background
+   (summary waiting on return); the session's intensity chart has no gap;
+   iOS: same checks, unchanged behaviour.
+
+1c. **Release build (60th)** — the release check in README (Sixtieth
+   follow-up), done before setting up the upload key so it installs over the
+   debug app; then the upload key set up and `bundleRelease` signed with it.
+
 ## Android plan (agreed)
 
 Round 1 done (52nd) and device-tested OK. Android icon done (53rd).
@@ -80,7 +90,44 @@ device-tested OK. Android audio recovery (58th) — waiting on device testing.
 Guide-track file names + Android version in Settings (59th) — waiting on
 device testing. Phase 3 complete after that; next is Phase 4 (Play release;
 personal Play account; Android version numbers to match iOS — set in
-android/gradle.properties since the 59th).
+android/gradle.properties since the 59th; steadypointVersionCode = the round
+number (James's choice, from the 60th): set it to the round number in every
+round's zip; never lower it).
+Phase 4 status (Nov 9):
+- Done: Google Play **personal** account created and verified (publisher
+  James Barnett, Colorado, USA). Round 60 release signing code is in; James
+  hasn't run the release steps yet (README, Sixtieth follow-up): release check
+  first, then create the upload key. Rounds 59–61 tested OK on Android and iOS.
+- Next for James: build a release APK (`./gradlew assembleRelease`, debug-key
+  signed) for testers *before* adding the upload key — every sideloaded APK
+  must share one key, or testers have to uninstall (losing data). Moving to
+  the Play version later also needs an uninstall (Google's key); Play's
+  internal testing track was suggested as the alternative.
+- Privacy policy drafted as a Claude Doc ("SteadyPoint Privacy Policy",
+  https://claude.ai/artifact/9GDtrCzM3nuj1kxf1UGQiv — covers iOS and Android:
+  nothing leaves the phone). James and his team are choosing where to host
+  it (NOT Google Sites or GitHub Pages). It must be a public, non-PDF URL,
+  required by both Play and the App Store (the iOS app is only on TestFlight
+  so far). Once the URL is known: add a "Privacy Policy" link in Settings
+  (both platforms; Play expects it reachable in-app).
+- Testers: ~75 Android testers planned; all need an M5Stick sensor (the
+  app can't be used without one). James decided **no simulated sensor**.
+  So the Play listing must say the sensor is required, and App access in
+  Play Console must explain it for reviewers.
+- Still to draft (after hosting is settled): store listing (Health &
+  Fitness, wellness/biofeedback wording, sensor required), Data safety (no
+  data collected or shared), health apps declaration, foreground-service
+  declaration (connectedDevice + mediaPlayback, each with a video: James
+  records it with the phone's screen recorder, unlisted YouTube; give him a
+  shot list), content rating, target audience 18+, no ads. The 512 px icon
+  already exists (android/app/src/main/ic_launcher-playstore.png); a
+  1024×500 feature graphic is needed. Then upload key, `bundleRelease`,
+  internal test, and the 12+-tester / 14-day closed test, then apply for
+  production.
+- Known Android gaps (Nov 9): no call detection below Android 12; the
+  checkpoint's periodic save pauses in the background; only one phone
+  tested (Galaxy A36, Android 16); round 50 tremor map list still to test on
+  Android.
 Google Play: the user is creating a **personal** developer account (needs a
 closed test with 12+ testers for 14 days before going public). Play lists
 medical apps as organization-only, so the listing and health declaration

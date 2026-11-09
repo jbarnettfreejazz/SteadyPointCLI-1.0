@@ -86,3 +86,9 @@ android/app/*.keystore
 !android/app/debug.keystore
 # Xcode per-user state
 xcuserdata/
+ios/Pods/
+ios/build/
+ios/Podfile.lock
+android/build/
+android/app/build/
+.DS_Store

@@ -485,6 +485,7 @@ class ZonedSampleVoice {
         connected: false,
         lastSemitones: null,
         disconnectTimer: null,
+        disconnectAt: null,
       };
     });
     this.loaded = false;
@@ -542,6 +543,7 @@ class ZonedSampleVoice {
       clearTimeout(z.disconnectTimer);
       z.disconnectTimer = null;
     }
+    z.disconnectAt = null;
     if (!z.connected) {
       z.gain.connect(this.output);
       z.connected = true;
@@ -551,15 +553,33 @@ class ZonedSampleVoice {
     return false;
   }
 
+  // SIXTY-FIRST follow-up: also tracked as z.disconnectAt and swept by
+  // setFrequency() (_sweepDisconnects), because Android doesn't run JS
+  // timers while the app isn't on screen (see liveSession.js) — the timer
+  // alone would leave every zone crossfaded away in the background still
+  // connected, each with its pitch-shifter running.
   _scheduleDisconnect(z) {
     if (z.disconnectTimer) clearTimeout(z.disconnectTimer);
-    z.disconnectTimer = setTimeout(() => {
-      z.disconnectTimer = null;
-      if (z.connected && this.zones[this.activeIndex] !== z) {
-        z.gain.disconnect(this.output);
-        z.connected = false;
-      }
-    }, (ZONE_XFADE_SEC + 0.1) * 1000);
+    const ms = (ZONE_XFADE_SEC + 0.1) * 1000;
+    z.disconnectAt = Date.now() + ms;
+    z.disconnectTimer = setTimeout(() => this._disconnectIdle(z), ms);
+  }
+
+  _disconnectIdle(z) {
+    if (z.disconnectTimer) clearTimeout(z.disconnectTimer);
+    z.disconnectTimer = null;
+    z.disconnectAt = null;
+    if (z.connected && this.zones[this.activeIndex] !== z) {
+      z.gain.disconnect(this.output);
+      z.connected = false;
+    }
+  }
+
+  _sweepDisconnects() {
+    const now = Date.now();
+    for (const z of this.zones) {
+      if (z.disconnectAt != null && now >= z.disconnectAt) this._disconnectIdle(z);
+    }
   }
 
   // Picks (and if needed crossfades to) the zone for `freq`.
@@ -599,6 +619,7 @@ class ZonedSampleVoice {
 
   setFrequency(freq, rampSec) {
     const t = this.ctx.currentTime;
+    this._sweepDisconnects();
     this._selectZone(freq, t);
     for (const z of this.zones) {
       if (!z.connected) continue;
@@ -650,6 +671,7 @@ class ZonedSampleVoice {
         clearTimeout(z.disconnectTimer);
         z.disconnectTimer = null;
       }
+      z.disconnectAt = null;
       z.gain.gain.setValueAtTime(0, t);
       if (z.connected) {
         z.gain.disconnect(this.output);
@@ -1494,3 +1516,6 @@ export function destroyAudio() {
   cello = viola = violin = custom = null;
   engineSuspended = false; // EIGHTEENTH follow-up: next initAudio() starts a fresh, running context
 }
+
+// Tests only (SIXTY-FIRST follow-up: tests/logic/test16.mjs).
+export { ZonedSampleVoice as __ZonedSampleVoiceForTests };

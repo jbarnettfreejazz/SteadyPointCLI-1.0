@@ -59,6 +59,22 @@ react {
  */
 def enableProguardInReleaseBuilds = false
 
+// SIXTIETH follow-up: true when ~/.gradle/gradle.properties has the Play
+// upload key's four settings and the key file exists.
+def hasUploadKey() {
+    def keys = ['STEADYPOINT_UPLOAD_STORE_FILE', 'STEADYPOINT_UPLOAD_STORE_PASSWORD',
+                'STEADYPOINT_UPLOAD_KEY_ALIAS', 'STEADYPOINT_UPLOAD_KEY_PASSWORD']
+    if (!keys.every { project.hasProperty(it) && project.property(it) }) return false
+    return file(project.property('STEADYPOINT_UPLOAD_STORE_FILE')).exists()
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (!hasUploadKey() && graph.allTasks.any { it.name ==~ /(bundle|assemble)Release/ }) {
+        logger.warn('SteadyPoint: no upload key set up — this release build is signed with the DEBUG key. ' +
+                    'Fine for your own phone; Google Play will reject it. See README (Sixtieth follow-up).')
+    }
+}
+
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
  *
@@ -97,6 +113,23 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // SIXTIETH follow-up: the Google Play upload key. Its file and
+        // passwords live in ~/.gradle/gradle.properties on the build Mac —
+        // never in this project or in Git:
+        //   STEADYPOINT_UPLOAD_STORE_FILE=/Users/<you>/Keys/steadypoint-upload.jks
+        //   STEADYPOINT_UPLOAD_STORE_PASSWORD=...
+        //   STEADYPOINT_UPLOAD_KEY_ALIAS=steadypoint-upload
+        //   STEADYPOINT_UPLOAD_KEY_PASSWORD=...
+        // Without them, release builds are signed with the debug key (fine
+        // for trying a release build on your own phone; Play rejects it).
+        if (hasUploadKey()) {
+            release {
+                storeFile file(project.property('STEADYPOINT_UPLOAD_STORE_FILE'))
+                storePassword project.property('STEADYPOINT_UPLOAD_STORE_PASSWORD')
+                keyAlias project.property('STEADYPOINT_UPLOAD_KEY_ALIAS')
+                keyPassword project.property('STEADYPOINT_UPLOAD_KEY_PASSWORD')
+            }
+        }
     }
     // FIFTY-SECOND follow-up: react-native-audio-api 0.4.18 links against
     // React Native's own native libraries and, on RN 0.75 (old architecture),
@@ -124,9 +157,9 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // SIXTIETH follow-up: the upload key when it's set up (see
+            // signingConfigs above), otherwise the debug key.
+            signingConfig hasUploadKey() ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }

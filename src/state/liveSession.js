@@ -134,6 +134,40 @@ function freshState() {
 let state = freshState();
 const listeners = new Set();
 const timers = { elapsedInterval: null, metricsInterval: null };
+
+// SIXTY-FIRST follow-up: Android stops an app's JS timers (setInterval /
+// setTimeout) whenever it isn't on screen — screen off or another app in
+// front (React Native's JavaTimerManager pauses on onHostPause). BLE packets
+// still arrive, but the 300 ms metrics update — which sets soundLevel and
+// pitchFreqHz for the sound — and the 1 s session clock ran only on timers,
+// so the sound froze at its last level/pitch (silence if the sensor was at
+// rest), no intensity was recorded, and a timed session didn't end until the
+// app came back. Now pushPacket() also runs both whenever they're due, so
+// they keep going on packet arrival (~50/s) in the background. The timers
+// stay as the fallback when packets stop (device disconnected). The "due"
+// checks below make sure each runs once per interval, whichever source
+// triggers it, so the recorded traces keep their ~300 ms spacing.
+// iOS: unchanged in practice (its timers keep running with background audio).
+const METRICS_INTERVAL_MS = 300;
+const METRICS_MIN_GAP_MS = 290; // a timer firing a little early still counts
+const ELAPSED_MIN_GAP_MS = 1000;
+let lastMetricsAt = 0;
+let lastElapsedAt = 0;
+let elapsedTick = null; // set by startTimers()
+
+function metricsDue(now) {
+  return timers.metricsInterval != null && now - lastMetricsAt >= METRICS_MIN_GAP_MS;
+}
+
+function runMetrics(now) {
+  lastMetricsAt = now;
+  updateLiveMetrics();
+}
+
+function runElapsed(now) {
+  lastElapsedAt = now;
+  elapsedTick?.();
+}
 let audioHook = null;
 
 // The user-adjustable "full-scale range motion" setting (see Settings
@@ -427,6 +461,10 @@ export function pushPacket(ax, ay, az) {
   // freezing or stalling reappears under real movement, that means even
   // single-layer can't sustain this rate, and this should revert to
   // calling audioHook from updateLiveMetrics below instead (~300ms).
+  // SIXTY-FIRST follow-up: metrics on packet arrival when due (see top),
+  // before the audio hook so the sound gets this update's level/pitch.
+  if (metricsDue(now)) runMetrics(now);
+
   if (audioHook) {
     try {
       // Same sr formula used by updateLiveMetrics() for the existing
@@ -455,6 +493,11 @@ export function pushPacket(ax, ay, az) {
   // packet rate. If this proves too chatty on lower-end Android devices,
   // throttle this to every Nth packet.
   notify();
+
+  // SIXTY-FIRST follow-up: the session clock on packet arrival when due —
+  // last, since a timed session's end (onComplete -> endSession) clears the
+  // audio hook and timers.
+  if (elapsedTick && now - lastElapsedAt >= ELAPSED_MIN_GAP_MS) runElapsed(now);
 }
 
 // Mirrors updateLiveMetrics() — run every 300ms while a session is active.
@@ -617,16 +660,30 @@ function updateLiveMetrics() {
 export function startTimers({ onElapsedTick, onComplete, totalSeconds } = {}) {
   stopTimers();
   const startedAtMs = Date.now() - state.elapsed * 1000;
-  timers.elapsedInterval = setInterval(() => {
+  // SIXTY-FIRST follow-up: one tick function for both the timer and packet
+  // arrival (see top). onComplete runs once — packets keep arriving after the
+  // end until endSession() has stopped everything.
+  let completed = false;
+  elapsedTick = () => {
     const wallSec = Math.floor((Date.now() - startedAtMs) / 1000);
     state.elapsed = totalSeconds ? Math.min(wallSec, totalSeconds) : wallSec;
     notify();
     onElapsedTick?.(state.elapsed);
-    if (totalSeconds && state.elapsed >= totalSeconds) {
+    if (totalSeconds && state.elapsed >= totalSeconds && !completed) {
+      completed = true;
       onComplete?.(state.elapsed);
     }
+  };
+  const now = Date.now();
+  lastElapsedAt = now;
+  lastMetricsAt = now;
+  timers.elapsedInterval = setInterval(() => {
+    runElapsed(Date.now());
   }, 1000);
-  timers.metricsInterval = setInterval(updateLiveMetrics, 300);
+  timers.metricsInterval = setInterval(() => {
+    const t = Date.now();
+    if (metricsDue(t)) runMetrics(t);
+  }, METRICS_INTERVAL_MS);
 }
 
 export function stopTimers() {
@@ -634,4 +691,5 @@ export function stopTimers() {
   if (timers.metricsInterval) clearInterval(timers.metricsInterval);
   timers.elapsedInterval = null;
   timers.metricsInterval = null;
+  elapsedTick = null;
 }

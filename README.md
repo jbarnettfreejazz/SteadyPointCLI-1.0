@@ -3444,6 +3444,107 @@ cleaned, ordinary names untouched; a picked "#1" file is saved and played
 under the cleaned name with the original shown; an old "#" name still plays
 on Android. 566 passed.
 
+## Sixtieth follow-up — Phase 4 begins: release signing for Google Play
+
+`android/app/build.gradle` signs release builds with the **Google Play upload
+key** when it's set up, and otherwise with the debug key, as before. The key's
+file and passwords live in `~/.gradle/gradle.properties` on the build Mac,
+never in the project or Git (`.gitignore` also blocks `*.jks` and
+`*.keystore` except `debug.keystore`). A release build without the key logs
+"SteadyPoint: no upload key set up — this release build is signed with the
+DEBUG key". That's fine on your own phone; Play rejects it.
+
+With Play App Signing (Play's default), Google signs the app users install;
+the upload key only proves an upload came from you. If it's lost, Play
+Console can reset it (Setup > App signing > request upload key reset). Back
+up the .jks file and its password anyway.
+
+### One-time setup (Mac)
+
+1. Create the key (Java 17's keytool). It asks for a password (PKCS12: the
+   store and key share it) and your name:
+   ```
+   mkdir -p ~/Keys
+   keytool -genkeypair -v -storetype PKCS12 -keystore ~/Keys/steadypoint-upload.jks \
+     -alias steadypoint-upload -keyalg RSA -keysize 2048 -validity 10000
+   ```
+2. Add these lines to `~/.gradle/gradle.properties` (create the file if
+   needed). Use the full path: Gradle doesn't expand `~`.
+   ```
+   STEADYPOINT_UPLOAD_STORE_FILE=/Users/<you>/Keys/steadypoint-upload.jks
+   STEADYPOINT_UPLOAD_STORE_PASSWORD=<password>
+   STEADYPOINT_UPLOAD_KEY_ALIAS=steadypoint-upload
+   STEADYPOINT_UPLOAD_KEY_PASSWORD=<same password>
+   ```
+3. Back up `steadypoint-upload.jks` and the password (password manager plus
+   a copy off the Mac).
+
+### Building the upload (.aab)
+
+```
+cd android && ./gradlew bundleRelease && cd ..
+keytool -printcert -jarfile android/app/build/outputs/bundle/release/app-release.aab
+```
+The second command should show your name, not "Android Debug". Raise
+`steadypointVersionCode` in `android/gradle.properties` before each upload.
+
+### Signatures on the test phone
+
+Android only installs an update signed with the same key as the installed
+app. The debug build, a release build with the upload key, and the Play
+version (Google's key) all differ, so switching between them needs an
+uninstall, which **erases the app's sessions and settings on that phone**.
+To keep your data: do the release check *before* step 2 (the release build
+then uses the debug key and installs over the debug app); after that, test
+with debug builds and Play installs.
+
+### Release check
+
+`npx react-native run-android --mode release`: a release build with no Metro.
+Check: launch; BLE connect; a session with sound; the guide track (a "#" name
+too); the notification; 10+ minutes with the screen off; the calibration
+wizard; sharing a log; Settings shows the version from gradle.properties.
+
+## Sixty-first follow-up — Android: sound and metrics keep updating in the background
+
+**Problem (Android).** With the screen off the sonification seemed to stop;
+with another app in front its pitch stayed fixed even when the sensor was at
+rest. A guide track kept playing in both cases.
+
+**Cause.** React Native on Android stops an app's JS timers while it isn't
+on screen (`JavaTimerManager` pauses on `onHostPause`, unless a headless JS
+task runs). BLE packets still arrived and the sound kept playing, but
+`updateLiveMetrics()` — which sets `soundLevel` and `pitchFreqHz` for the
+sound — ran only on its 300 ms `setInterval`, so the sound held its last
+level and pitch (silence if the sensor was at rest when the screen went
+off). The same pause meant no intensity was recorded for that stretch, and a
+timed session didn't end until the app came back. The guide track uses
+Android's MediaPlayer, which needs no JS. iOS keeps timers running while
+background audio plays, so it never showed this.
+
+**Fix — `src/state/liveSession.js`.** `pushPacket()` also runs the metrics
+update (before the audio hook) when 290 ms or more have passed since the last
+run, and the session clock when a second has passed. Packets arrive ~50/s
+whatever is on screen. The timers stay as the fallback when packets stop
+(device out of range); both sources share the "due" checks, so each runs
+once per interval and the recorded traces keep their ~300 ms spacing. A
+timed session's `onComplete` now runs once.
+
+**Also — `src/services/audio.js`.** A sample zone crossfaded away was
+disconnected by a `setTimeout`, which doesn't fire in the background, so
+zones left behind stayed connected with their pitch-shifters running. The
+disconnect time is now also checked on every pitch update.
+
+Not changed: the session checkpoint's periodic save is still on a timer; it
+saves when the app goes to the background (as before) and again on return.
+
+Tests: `test16.mjs` (new) — no timers firing: intensity every ~300 ms and
+the sound level following shake / rest / shake; packets plus timers: no
+double runs; packets stopped: timers carry on; a 5 s timed session ends at
+5 s from packets alone, once; nothing runs after the session stops; zones
+disconnected without their timer. `test6.mjs` now feeds packets on a 20 ms
+clock. 582 passed.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop
