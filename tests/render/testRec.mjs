@@ -9,17 +9,17 @@ const press = (root, label) => { const p = root.findAll((n) => n.type === 'Press
 const navCalls = [];
 globalThis.__nav = { navigate: (...a) => navCalls.push(['navigate', ...a]), goBack: () => navCalls.push(['goBack']), canGoBack: () => true, addListener: () => () => {} };
 globalThis.__live = { elapsed: 125, displayLevel: 30, liveSev: 'Mild', liveFreqHz: 5.2, liveXpct: 50, liveYpct: 40, liveZpct: 10, recentX: Array(100).fill(0), dispX: Array(50).fill(0), dispY: Array(50).fill(0), dispZ: Array(50).fill(0) };
-const settings = { fullScaleG: 0.35, noiseFloorG: 0.006, tremorBandMinHz: 3, tremorBandMaxHz: 14, bandFilterEnabled: false };
+const settings = { fullScaleG: 0.35, noiseFloorG: 0.006, tremorBandMinHz: 3, tremorBandMaxHz: 14, bandFilterEnabled: false, sessionView: 'advanced' };
 let updates = [];
 const mk = (config) => { updates = []; globalThis.__store = { state: { settings, config, isConnected: true, allSessions: [], guideMediaSource: null }, actions: { updateSettings: (p) => updates.push(p), updateConfig: () => {} } }; };
 
 // continuous: button shown, opens dialog
 mk({ duration: null, feedbackType: 'visual' });
 let r; act(() => { r = TR.create(React.createElement(RecordingScreen)); }); let t = texts(r.root);
-check('continuous: button under sonification', t.includes('Sonification | Edit Calibration Settings'), t.slice(0, 300));
+check('continuous (Advanced View): Sound + Edit Calibration buttons', t.includes('Sound: Off | Edit Calibration'), t.slice(0, 600));
 // FIFTY-SEVENTH follow-up: the editor is its own screen (was a Modal here)
 check('no dialog on the Recording screen', r.root.findAll((n) => n.type === 'Modal').length === 0 && r.root.findAll((n) => n.type === 'TextInput').length === 0);
-press(r.root, 'Edit Calibration Settings');
+press(r.root, 'Edit Calibration');
 check('button opens the session calibration screen', navCalls.some((c) => c[0] === 'navigate' && c[1] === 'sessionCalibration' && c[3]?.pop === true), JSON.stringify(navCalls));
 let ed; act(() => { ed = TR.create(React.createElement(SessionCalibrationScreen)); });
 check('editor screen: note, 4 fields, scrollable, safe area', ed.root.findAll((n) => n.type === 'TextInput').length === 4 && texts(ed.root).includes('Changes apply to this session right away') && ed.root.findAll((n) => n.type === 'ScrollView').length === 1 && ed.root.findAll((n) => n.type === 'SafeAreaView').length === 1);
@@ -39,7 +39,7 @@ check('feedback noted', (globalThis.__fb || []).includes('visual'));
 // timed: no button
 mk({ duration: 10, feedbackType: 'visual' });
 act(() => { r = TR.create(React.createElement(RecordingScreen)); }); t = texts(r.root);
-check('timed: no button', !t.includes('Edit Calibration Settings') && !t.includes('Sonification'));
+check('timed: no button', !t.includes('Edit Calibration') && !t.includes('Sonification') && !t.includes('Sound: '));
 
 // chart
 const cc = { bg2: '#eee', bd3: '#ddd', tx2: '#555', tx3: '#999', danger: 'red', warning: 'orange', success: 'green' };
@@ -102,61 +102,114 @@ act(() => { r = TR.create(React.createElement(IntensityChart, { trace: [10, 20, 
 check('short session keeps elapsed axis', texts(r.root).includes('0:00') && texts(r.root).includes('40 min') && r.root.findAll(n => n.type === 'Svg')[0].props.height === 140);
 act(() => { r = TR.create(React.createElement(IntensityChart, { trace: [10, 20, 30], durationSec: 3 * 3600, colors: cc })); });
 check('old record without start time', texts(r.root).includes('0:00') && texts(r.root).includes('3 h'));
-// ---- FORTY-NINTH follow-up: tremor map + numbers (replaces 45th/47th/48th text+bar checks) ----
-const recState = (settings, pitchFreqHz, actualFreqHz = pitchFreqHz, extra = {}) => {
-  globalThis.__live = { ...globalThis.__live, liveFreqHz: 5.2, pitchFreqHz, actualFreqHz, liveRmsG: 0.12, liveRmsAllG: 0.2, mutedReason: null, mapTrail: [], ...extra };
-  globalThis.__store = { state: { settings: { ...settings }, config: { duration: null, feedbackType: 'both' }, isConnected: true, allSessions: [], guideMediaSource: null }, actions: { updateSettings() {}, updateConfig() {} } };
+// ---- SIXTY-SECOND follow-up: Simple / Advanced views (replaces the 45th–50th text/map checks) ----
+// Run once as iOS and once as Android: the screen has no platform branches
+// for these views, and this proves both render the same.
+const recState = (settings, extraLive = {}, config = { duration: null, feedbackType: 'both' }) => {
+  updates = [];
+  globalThis.__live = { ...globalThis.__live, mapTrail: [{ t: Date.now(), af: null, ag: 0, pf: null, pg: 0 }], liveSev: 'Mild', displayLevel: 34, displayG: 0.041, pitchFreqHz: null, actualFreqHz: null, liveRmsG: 0, liveRmsAllG: 0, mutedReason: null, ...extraLive };
+  globalThis.__store = { state: { settings: { ...settings }, config, isConnected: true, allSessions: [], guideMediaSource: null }, actions: { updateSettings: (p) => updates.push(p), updateConfig() {} } };
 };
-const FQ = { sonificationMode: 'frequency' };
-const BAND = { sonificationMode: 'frequency', bandFilterEnabled: true, tremorBandMinHz: 4, tremorBandMaxHz: 8, noiseFloorG: 0.006, fullScaleG: 0.35 };
+const BAND = { bandFilterEnabled: true, tremorBandMinHz: 4, tremorBandMaxHz: 8, noiseFloorG: 0.006, fullScaleG: 0.35 };
+const ADV = { ...BAND, sessionView: 'advanced' };
+const SIMPLE = { ...BAND, sessionView: 'simple' };
 const show = (...a) => { recState(...a); act(() => { r = TR.create(React.createElement(RecordingScreen)); }); t = texts(r.root); };
 const circles = () => r.root.findAll((n) => n.type === 'Circle');
-const bigFilled = () => circles().filter((n) => n.props.r === 6 && n.props.fill !== 'none');
-const bigHollow = () => circles().filter((n) => n.props.r === 6 && n.props.fill === 'none');
-const box = () => r.root.findAll((n) => n.type === 'Rect' && n.props.fillOpacity === 0.1)[0];
-const dashed = () => r.root.findAll((n) => n.type === 'Line' && n.props.strokeDasharray);
-const X = (hz) => 38 + ((hz - 1) / 14) * 272;
+const nowDot = () => circles().filter((n) => n.props.r === 7);
+const trailDots = () => circles().filter((n) => n.props.r === 3.5);
+const styleOf = (n) => [].concat(n.props.style).flat(3).filter(Boolean).reduce((a, x) => ({ ...a, ...x }), {});
+const textNode = (s) => r.root.findAll((n) => n.type === 'Text' && [].concat(n.props.children).join('') === s)[0];
+const C = { info: '#2563eb', danger: '#dc2626', tx1: '#0f0f0f' }; // light theme (mocks)
 
-show(BAND, 4.7);
-check('in band: one line with g', t.includes('in-band 4.7 Hz (.12g)') && !t.includes('actual:'), t.slice(0, 500));
-check('in band: filled dot only', bigFilled().length === 1 && bigHollow().length === 0 && Math.abs(bigFilled()[0].props.cx - X(4.7)) < 0.01);
-check('box = band 4-8', Math.abs(box().props.x - X(4)) < 0.01 && Math.abs(box().props.x + box().props.width - X(8)) < 0.01);
-check('no upper limit: open box + dashed full scale line', dashed().length === 1 && box().props.y === 10);
-check('frequency mode caption', t.includes('pitch follows the in-band frequency'));
-show(BAND, null, 3.5);
-check('below band: actual + distance, in-band --', t.includes('actual: 3.5 Hz (.20g) · 0.5 Hz below band') && t.includes('in-band: --'), t.slice(0, 500));
-check('below band: hollow dot only', bigHollow().length === 1 && bigFilled().length === 0 && Math.abs(bigHollow()[0].props.cx - X(3.5)) < 0.01);
-show(BAND, null, 9.2);
-check('above band', t.includes('actual: 9.2 Hz (.20g) · 1.2 Hz above band'), t.slice(0, 400));
-show(BAND, 4.1, 3.5, { liveRmsG: 0.012 });
-check('both: actual line + in-band value', t.includes('actual: 3.5 Hz (.20g) · 0.5 Hz below band') && t.includes('in-band: 4.1 Hz (.012g)') && bigFilled().length === 1 && bigHollow().length === 1, t.slice(0, 500));
-show(BAND, 6.2, 6.4);
-check('both in band but different: no distance', t.includes('actual: 6.4 Hz (.20g)') && !t.includes('below band') && !t.includes('above band') && t.includes('in-band: 6.2 Hz'), t.slice(0, 400));
-show(BAND, 6.21, 6.24);
-check('same to 0.1 Hz: single value', t.includes('in-band 6.2 Hz') && !t.includes('actual:'));
-show(BAND, 6.2, 6.2, { mutedReason: 'ceiling' });
-check('upper limit mutes: note', t.includes('in-band 6.2 Hz (.12g) · silent above upper limit'), t.slice(0, 400));
-show({ ...BAND, intensityCeilingG: 0.2 }, 6.2);
-check('upper limit set: closed box, no dashed line', dashed().length === 0 && box().props.y > 10);
-show(FQ, 2.1, 2.1);
-check('filter off: no distance, full-width box, caption', t.includes('actual: 2.1 Hz') && !t.includes('below band') && t.includes('Band filtering off: all frequencies sound') && Math.abs(box().props.x - 38) < 0.01, t.slice(0, 400));
-show(BAND, null, null);
-check('rest: dash, no dots', t.includes('—') && bigFilled().length === 0 && bigHollow().length === 0);
-show(BAND, 5, 5, { mapTrail: [{ t: Date.now() - 30000, af: 3.5, ag: 0.1, pf: null, pg: 0 }, { t: Date.now() - 10000, af: 5, ag: 0.2, pf: 5, pg: 0.1 }, { t: Date.now(), af: 5, ag: 0.2, pf: 5, pg: 0.1 }] });
-const small = circles().filter((n) => n.props.r === 2.5);
-check('trail: past points drawn (latest is the big dot), older fainter', small.length === 2 && small[0].props.strokeOpacity < small[1].props.fillOpacity, small.map((n) => n.props.strokeOpacity ?? n.props.fillOpacity).join(','));
-show({ bandFilterEnabled: true, tremorBandMinHz: 4, tremorBandMaxHz: 8 }, 6.4);
-check('intensity mode: map shows, no pitch caption, old readout gone', t.includes('in-band 6.4 Hz') && !t.includes('pitch follows') && !t.includes('5.2 Hz') && bigFilled().length === 1, t.slice(0, 400));
+const IN_ZONE = { pitchFreqHz: 4.7, actualFreqHz: 4.7, liveRmsG: 0.041, liveRmsAllG: 0.05 };
+const OVER = { pitchFreqHz: 5.6, actualFreqHz: 5.6, liveRmsG: 0.48, liveRmsAllG: 0.5, displayLevel: 100, displayG: 0.48, liveSev: 'High' };
+const BELOW = { pitchFreqHz: null, actualFreqHz: 5.2, liveRmsG: 0.004, liveRmsAllG: 0.007, displayLevel: 0, liveSev: 'None' };
+const OUT = { pitchFreqHz: null, actualFreqHz: 2.4, liveRmsG: 0.003, liveRmsAllG: 0.03, displayLevel: 0, liveSev: 'None' };
 
-// ---- FORTY-SEVENTH follow-up: g next to the intensity % ----
-show({}, null, null, { displayLevel: 60, displayG: 0.7, liveSev: 'Moderate' });
+for (const os of ['ios', 'android']) {
+  globalThis.__os = os;
+  const P = `${os}: `;
+  // switch + remembered view
+  show({ ...BAND }, IN_ZONE);
+  check(P + 'no saved view → Simple View', t.includes('Simple View | Advanced View') && !t.includes('Tremor map') && !t.includes('Raw motion'), t.slice(0, 400));
+  const tabs = r.root.findAll((n) => n.type === 'Pressable' && n.props.accessibilityRole === 'tab');
+  check(P + 'two tabs, Simple selected', tabs.length === 2 && tabs[0].props.accessibilityState.selected === true && tabs[1].props.accessibilityState.selected === false);
+  press(r.root, 'Advanced View');
+  check(P + 'choosing Advanced saves it', updates.length === 1 && updates[0].sessionView === 'advanced', JSON.stringify(updates));
+  press(r.root, 'Simple View');
+  check(P + 'tapping the current view saves nothing', updates.length === 1);
+  show(ADV, IN_ZONE);
+  check(P + 'saved Advanced → opens in Advanced', t.includes('Tremor map') && t.includes('Raw motion') && t.includes('trail: last 60 s'));
+
+  // top bar
+  check(P + 'continuous: label top right', t.includes('Continuous session'));
+  show(ADV, IN_ZONE, { duration: 10, feedbackType: 'visual' });
+  check(P + 'timed: countdown, no continuous label, no sound/edit buttons', t.includes('-07:55') && !t.includes('Continuous session') && !t.includes('Sound: ') && !t.includes('Edit Calibration'), t.slice(0, 200));
+
+  // Simple View: no Edit Calibration, sonification switch, End Session
+  show(SIMPLE, IN_ZONE);
+  check(P + 'Simple: sonification + end, no Edit Calibration, no map/waveform', t.includes('Sonification') && t.includes('End Session') && !t.includes('Edit Calibration') && circles().length === 0 && r.root.findAll((n) => n.type === 'Sparkline').length === 0, t.slice(0, 600));
+
+  // (i) in zone
+  check(P + 'Simple in zone: circle, label, status', t.includes('34 | Mild | 34% (.041g) intensity | Inside your tremor zone (4–8 Hz)'), t.slice(0, 400));
+  show(ADV, IN_ZONE);
+  check(P + 'Adv in zone: rows', t.includes('4.7 Hz · .041 g · intensity 34 | inside your tremor zone (4–8 Hz)'), t);
+  check(P + 'Adv in zone: row 1 blue', styleOf(textNode('4.7 Hz · .041 g · intensity 34')).color === C.info);
+  check(P + 'Adv in zone: blue dot', nowDot().length === 1 && nowDot()[0].props.fill === C.info);
+  check(P + 'Adv: legend', t.includes('in zone | above your 100 | below threshold | out of zone'));
+  check(P + 'Adv: map labels', t.includes('your level 100') && t.includes('your tremor') && t.includes('Intensity') && t.includes('4.0') && t.includes('8.0'));
+
+  // (ii) above 100
+  show(ADV, OVER);
+  check(P + 'Adv over: rows', t.includes('5.6 Hz · .48 g · intensity 100 (max) | above your level 100 — still counts as 100'), t);
+  check(P + 'Adv over: row 1 red, red dot, High', styleOf(textNode('5.6 Hz · .48 g · intensity 100 (max)')).color === C.danger && nowDot()[0].props.fill === C.danger && t.includes('100 | High | >100% (.48g) intensity'));
+  show(SIMPLE, OVER);
+  check(P + 'Simple over: status', t.includes('Above your level 100 — counts as 100'));
+
+  // (iii) below threshold — intensity shown as 0, grey filled dot
+  show(ADV, BELOW);
+  check(P + 'Adv below: rows', t.includes('5.2 Hz · .004 g · intensity 0 | below your tremor threshold — counts as 0'), t);
+  check(P + 'Adv below: grey filled dot, black row 1', nowDot()[0].props.fill !== 'none' && nowDot()[0].props.fill !== C.info && styleOf(textNode('5.2 Hz · .004 g · intensity 0')).color === C.tx1);
+  check(P + 'Adv below: None, 0%', t.includes('0 | None | 0% (.004g) intensity'));
+
+  // (iv) out of zone — distance
+  show(ADV, OUT);
+  check(P + 'Adv out: rows', t.includes('2.4 Hz · .030 g | 1.6 Hz below your tremor zone — no sound'), t);
+  check(P + 'Adv out: hollow dot, dash circle', nowDot()[0].props.fill === 'none' && t.includes('— | Out of zone | Outside your frequency range · no sound'));
+  show(SIMPLE, OUT);
+  check(P + 'Simple out: status', t.includes('2.4 Hz · below your tremor zone'));
+
+  // upper limit
+  show({ ...ADV, intensityCeilingG: 0.2 }, { pitchFreqHz: 6, actualFreqHz: 6, liveRmsG: 0.25, liveRmsAllG: 0.26, displayLevel: 70, liveSev: 'High', mutedReason: 'ceiling' });
+  check(P + 'upper limit: no sound text + map label', t.includes('above your upper limit — no sound') && t.includes('upper limit') && nowDot()[0].props.fill === 'none', t);
+
+  // band filtering off
+  show({ sessionView: 'advanced', bandFilterEnabled: false }, { pitchFreqHz: 2.1, actualFreqHz: 2.1, liveRmsG: 0.05, liveRmsAllG: 0.05 });
+  check(P + 'band off: all frequencies count', t.includes('all frequencies count (band filtering off)') && !t.includes('4.0'), t);
+
+  // waiting for data
+  show(ADV, { mapTrail: [], recentX: [] });
+  check(P + 'waiting: rows + no dot', t.includes('Waiting for device data…') && nowDot().length === 0 && t.includes('Starting…'));
+  show(SIMPLE, { mapTrail: [] });
+  check(P + 'waiting (Simple): message, chip hidden', t.includes('Starting… | Waiting for device data…'));
+
+  // trail: dots coloured by state, older fainter
+  const now = Date.now();
+  show(ADV, { ...IN_ZONE, mapTrail: [{ t: now - 40000, af: 2.4, ag: 0.03, pf: null, pg: 0.003 }, { t: now - 10000, af: 5, ag: 0.2, pf: 5, pg: 0.1 }, { t: now, af: 4.7, ag: 0.05, pf: 4.7, pg: 0.041 }] });
+  const tr = trailDots();
+  check(P + 'trail: hollow (out) then blue, older fainter', tr.length === 2 && tr[0].props.fill === 'none' && tr[1].props.fill === C.info && tr[0].props.strokeOpacity < tr[1].props.fillOpacity, tr.map((n) => n.props.fill).join(','));
+
+  // fixed-height rows and scaling caps (iOS Dynamic Type / Android Font size)
+  const row1 = textNode('4.7 Hz · .041 g · intensity 34') || r.root.findAll((n) => n.type === 'Text' && styleOf(n).height === 24)[0];
+  check(P + 'row 1 fixed: one line, fixed height, capped scaling', row1 && row1.props.numberOfLines === 1 && styleOf(row1).height === 24 && row1.props.maxFontSizeMultiplier === 1.2 && row1.props.adjustsFontSizeToFit === true);
+}
+globalThis.__os = 'ios';
+
+// ---- FORTY-SEVENTH follow-up (kept): g next to the intensity % ----
+show({ sessionView: 'simple' }, { pitchFreqHz: 6, actualFreqHz: 6, liveRmsG: 0.2, displayLevel: 60, displayG: 0.7, liveSev: 'Moderate' });
 check('"60% (.70g) intensity"', t.includes('Moderate | 60% (.70g) intensity'), t.slice(0, 300));
-show({}, null, null, { displayLevel: 3, displayG: 0.0153 });
+show({ sessionView: 'simple' }, { pitchFreqHz: 6, actualFreqHz: 6, liveRmsG: 0.0153, displayLevel: 3, displayG: 0.0153 });
 check('small g: 3 decimals', t.includes('3% (.015g) intensity'), t.slice(0, 300));
-show({}, null, null, { displayLevel: 100, displayG: 1.24 });
-check('above 1 g', t.includes('100% (1.24g) intensity'), t.slice(0, 300));
-show({}, null, null, { displayLevel: 0, displayG: undefined });
-check('missing g → .000g', t.includes('0% (.000g) intensity'), t.slice(0, 300));
 
 // FIFTY-SECOND follow-up: Android back button is swallowed while Recording is shown; iOS registers nothing
 const backs = () => (globalThis.__back || []).filter((h) => h.ev === 'hardwareBackPress');

@@ -1,4 +1,4 @@
-# SteadyPoint — handoff note (Nov 9, 2026)
+# SteadyPoint — handoff note (Nov 10, 2026)
 
 React Native 0.81.6 app (old architecture; upgraded from 0.75.4 in the
 Fifty-fourth follow-up — do not go past 0.81.x, see README) (repo root), on iOS and — since the Fifty-second
@@ -23,7 +23,12 @@ names (e.g. `FIFTIETH follow-up`).
   (Android Studio + JDK 17 installed; WAVs already in
   `android/app/src/main/assets/custom/`).
 - Run `tests/` (`cd tests && npm install && npm test`) after changes; add
-  checks for new behaviour. See `tests/README.md`.
+  checks for new behaviour. See `tests/README.md`. Two logic tests need the
+  app's own packages: `npm install` in the project root first.
+- **Every change goes to both iOS and Android** (James, Nov 9): implement on
+  both, add tests that run as both (`globalThis.__os`), give a device test
+  list split by platform, and set `steadypointVersionCode` to the round
+  number.
 
 ## Current use case (drives recent work)
 
@@ -31,8 +36,10 @@ A friend uses long **Continuous sessions** to find tremor triggers: he
 tweaks calibration mid-session (Edit Calibration Settings) so sound plays
 only when the tremor is inside a chosen frequency band and intensity
 window, then goes about his day waiting for audio nudges. The **tremor
-map** on the Recording screen shows the settings box, the in-band reading
-(filled dot), the actual/dominant reading (hollow dot) and a 60 s trail.
+map** (Recording screen, Advanced View since the 62nd) shows the tremor zone
+box, intensity 0/100 lines, one dot per reading coloured by state (blue in
+zone, red above 100, grey below threshold, hollow out of zone) and a 60 s
+trail; three fixed rows under it explain the current reading.
 
 ## Device-tested OK (recent rounds)
 
@@ -44,6 +51,16 @@ map** on the Recording screen shows the settings box, the in-band reading
 - 57th: Edit Calibration during a session as a screen (Android + iOS).
 
 ## Waiting on device testing
+
+0. **Simple View / Advanced View (62nd)** — on iOS and Android: switch
+   views; the choice is kept for the next session (also after restarting
+   the app); Simple View has no Edit Calibration; "Continuous session" top
+   right (countdown on timed sessions); the four design states (in zone /
+   above 100 / below threshold / out of zone) with their circle, rows,
+   colours and dots; upper limit on → "above your upper limit — no sound";
+   band filtering off; dark mode; large system text (iOS Dynamic Type,
+   Android Font size) — rows stay one line; a narrow phone or Android
+   "Display size" large — row 1 shrinks to fit.
 
 1. **Android audio recovery (58th)** — during a sound-on session: connect a
    Bluetooth speaker, disconnect it, plug/unplug headphones → sound
@@ -141,10 +158,9 @@ should present SteadyPoint as wellness/biofeedback, not diagnosis.
   of the current saved "Dominant freq" (= last reading at intensity ≥ 8,
   older method, can be below the band and is shown without band context).
 - Flag a saved dominant frequency outside the band ("1.8 Hz · below band").
+- Waveform back on Simple View (design notes left it open; not added).
 - Trail length option on the map (1 min / 5 min / whole session, density
   shading for long spans).
-- Call the hollow dot "dominant" and draw a guide line to the frequency
-  axis with its value.
 - "Include this" / drag the box edges on the map to widen settings.
 - Label edge-spill or harmonic in-band readings.
 - Deferred earlier: built-in test signal; frequency debug logging.

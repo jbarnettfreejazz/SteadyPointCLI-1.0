@@ -6,9 +6,10 @@ import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { useLiveSession } from '../state/useLiveSession';
 import { orbSize, orbRGB, fmt } from '../utils/dsp';
-import { endSession, noteFeedbackType, pitchRangeFor } from '../services/sessionLogic';
+import { describeReading, readingWindow, sessionViewOf } from '../utils/sessionReading';
+import { endSession, noteFeedbackType } from '../services/sessionLogic';
 import { onSessionPersisted } from '../services/sessionCheckpoint';
-import TremorMap from '../components/TremorMap';
+import TremorMap, { TremorMapLegend } from '../components/TremorMap';
 import { setAudioHook, getLiveState } from '../state/liveSession';
 import * as audioService from '../services/audio';
 import { playGuideTrack, stopGuideTrack } from '../services/guideTrackPlayer';
@@ -17,15 +18,14 @@ import { useKeepAwake } from '@sayem314/react-native-keep-awake';
 import { go } from '../navigation/go';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const SPARK_CARD_WIDTH = SCREEN_WIDTH * 0.9;
-const SPARK_WIDTH = SPARK_CARD_WIDTH - 24; // minus sparkCard's horizontal padding (12 each side)
-
-// FORTY-SEVENTH follow-up: g value next to the intensity %, e.g. ".70g"
-// (3 decimals below 0.1 g, e.g. ".045g").
-function formatG(g) {
-  const v = typeof g === 'number' && isFinite(g) && g > 0 ? g : 0;
-  return `${v.toFixed(v < 0.1 ? 3 : 2).replace(/^0(?=\.)/, '')}g`;
-}
+// SIXTY-SECOND follow-up: cards span the screen less the page padding (16
+// each side); the waveform sits inside the card's padding (12 each side).
+const PAGE_PAD = 16;
+const SPARK_WIDTH = SCREEN_WIDTH - PAGE_PAD * 2 - 24 - 2;
+// Text that must keep its fixed height (rows under the map, the status
+// line) grows with the system text size only this far — iOS Dynamic Type
+// and Android "Font size" both honour it.
+const FIXED_TEXT_SCALE = 1.2;
 
 export default function RecordingScreen() {
   const c = useTheme();
@@ -110,19 +110,6 @@ export default function RecordingScreen() {
   const remaining = isContinuous ? 0 : Math.max(0, total - live.elapsed);
   const progress = isContinuous ? 0 : Math.min(1, live.elapsed / total);
 
-  const diam = orbSize(live.displayLevel, SCREEN_WIDTH);
-  const [r, g, b] = orbRGB(live.displayLevel);
-  const orbColor = `rgb(${r},${g},${b})`;
-
-  const severityColor =
-    live.liveSev === 'None'
-      ? c.success
-      : live.liveSev === 'Mild'
-      ? c.info
-      : live.liveSev === 'Moderate'
-      ? c.warning
-      : c.danger;
-
   // THIRTY-SIXTH follow-up: keep the session record's sound setting in step
   // with the sonification switch (continuous sessions).
   useEffect(() => {
@@ -135,77 +122,28 @@ export default function RecordingScreen() {
   // FIFTY-SEVENTH follow-up: the editor is now its own screen
   // (screens/SessionCalibrationScreen.js), pushed over this one.
 
-  // FORTY-FIFTH follow-up: in "Pitch follows: Frequency" mode, the number
-  // under the ring shows the frequency that actually drives the pitch
-  // (liveSession pitchFreqHz — the tremorPeakFrequency() reading), with a
-  // bar showing where it sits between the lowest note (band minimum) and
-  // the highest (band maximum). Since the FORTY-NINTH follow-up the same
-  // text and bar also show in Intensity mode (labelled just "frequency").
-  const pitchByFrequency = state.settings.sonificationMode === 'frequency';
-  // At rest (no reading, sound faded out) the readout clears to "—" and the
-  // marker disappears, so the screen matches the silence.
-  //
-  // FORTY-SEVENTH follow-up: the text says whether the tremor is in the
-  // band (the pitch range — the tremor band, or 3–14 Hz with band
-  // filtering off), using actualFreqHz, the strongest frequency in all
-  // motion:
-  //   in the band      → "in-band 4.7 Hz"
-  //   outside the band → "actual: 3.5 Hz, in-band: --"
-  //   actual and in-band differ → "actual: 3.5 Hz, in-band: 4.1 Hz"
-  //                      (see FORTY-EIGHTH follow-up below)
-  // The marker shows the in-band frequency, and is hidden when there's none.
-  const pitchRange = pitchRangeFor(state.settings);
-  const inRange = (f) => f >= pitchRange.minHz - 0.05 && f <= pitchRange.maxHz + 0.05;
-  const actualFreq = typeof live.actualFreqHz === 'number' ? live.actualFreqHz : null;
-  const pitchFreq = typeof live.pitchFreqHz === 'number' && inRange(live.pitchFreqHz) ? live.pitchFreqHz : null;
-  const actualInBand = actualFreq != null && inRange(actualFreq);
-  const inBandFreq = actualInBand ? pitchFreq ?? actualFreq : pitchFreq;
-  // FORTY-EIGHTH follow-up: "actual" is shown whenever it differs from the
-  // in-band reading (as displayed, to 0.1 Hz) — also when both are in the
-  // band — not only when the actual frequency is outside the band.
-  //
-  // FIFTIETH follow-up: the frequency text now sits under the tremor map
-  // (components/TremorMap.js), which replaces the bar, and adds the g and,
-  // with band filtering on, how far the actual frequency is from the band:
-  //   same   → "in-band 4.7 Hz (.12g)"
-  //   differ → "actual: 3.5 Hz (.20g) · 0.5 Hz below band"
-  //            "in-band: --"   or   "in-band: 4.1 Hz (.012g)"
-  // plus "· silent above upper limit" while the upper limit mutes the sound.
-  const fmtHz = (f) => f.toFixed(1);
-  const bandOn =
-    !!state.settings.bandFilterEnabled && state.settings.tremorBandMaxHz > state.settings.tremorBandMinHz;
-  const showBoth = actualFreq != null && (inBandFreq == null || fmtHz(actualFreq) !== fmtHz(inBandFreq));
-  const ceilingNote = live.mutedReason === 'ceiling' ? ' · silent above upper limit' : '';
-  let actualLine = null;
-  let inBandLine = '—';
-  if (showBoth) {
-    let away = '';
-    if (bandOn && actualFreq < state.settings.tremorBandMinHz) {
-      away = ` · ${fmtHz(state.settings.tremorBandMinHz - actualFreq)} Hz below band`;
-    } else if (bandOn && actualFreq > state.settings.tremorBandMaxHz) {
-      away = ` · ${fmtHz(actualFreq - state.settings.tremorBandMaxHz)} Hz above band`;
-    }
-    actualLine = `actual: ${fmtHz(actualFreq)} Hz (${formatG(live.liveRmsAllG)})${away}`;
-    inBandLine = `in-band: ${inBandFreq != null ? `${fmtHz(inBandFreq)} Hz (${formatG(live.liveRmsG)})` : '--'}${
-      inBandFreq != null ? ceilingNote : ''
-    }`;
-  } else if (inBandFreq != null) {
-    inBandLine = `in-band ${fmtHz(inBandFreq)} Hz (${formatG(live.liveRmsG)})${ceilingNote}`;
-  }
-  const mapWindow = {
-    bandOn,
-    minHz: state.settings.tremorBandMinHz ?? 3,
-    maxHz: state.settings.tremorBandMaxHz ?? 14,
-    noiseFloorG: typeof state.settings.noiseFloorG === 'number' ? state.settings.noiseFloorG : 0.006,
-    fullScaleG: typeof state.settings.fullScaleG === 'number' ? state.settings.fullScaleG : 0.35,
-    ceilingG: typeof state.settings.intensityCeilingG === 'number' && state.settings.intensityCeilingG > 0 ? state.settings.intensityCeilingG : null,
+  // SIXTY-SECOND follow-up: Simple / Advanced views. Everything shown about
+  // the current reading — the circle, its label, the two rows under the
+  // map, the Simple View status line and each map dot — comes from
+  // describeReading() / classifyReading() in utils/sessionReading.js, so
+  // the two views can never disagree. (Replaces the 45th–50th follow-ups'
+  // "in-band / actual" text lines, the frequency caption and the X/Y/Z
+  // percentage bars.)
+  const view = sessionViewOf(state.settings);
+  const setView = (v) => {
+    if (v !== view) actions.updateSettings({ sessionView: v }); // saved with the settings (App.js)
   };
+  const win = readingWindow(state.settings);
+  const reading = describeReading(live, win);
   const mapNow = {
-    af: actualFreq,
+    af: typeof live.actualFreqHz === 'number' ? live.actualFreqHz : null,
     ag: live.liveRmsAllG,
     pf: typeof live.pitchFreqHz === 'number' ? live.pitchFreqHz : null,
     pg: live.liveRmsG,
   };
+  const hasMapData = Array.isArray(live.mapTrail) && live.mapTrail.length > 0;
+  const circle = circleColors(reading.circle.tone, reading.level, c);
+  const labelColor = toneColor(reading.label.tone, c);
 
   const handleEnd = () => {
     endSession({ state, actions, navigation, secs: live.elapsed, byTimer: false });
@@ -245,11 +183,14 @@ export default function RecordingScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.allSessions]);
 
+  const soundControls = isContinuous;
+  const toggleSound = (on) => actions.updateConfig({ feedbackType: on ? 'both' : 'visual' });
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: c.bg1 }]}>
       <View style={styles.topBar}>
-        <Text style={{ color: c.tx2, fontSize: 13 }}>{fmt(live.elapsed)}</Text>
-        {!isContinuous && <Text style={{ color: c.tx2, fontSize: 13 }}>-{fmt(remaining)}</Text>}
+        <Text style={{ color: c.tx2, fontSize: 15 }}>{fmt(live.elapsed)}</Text>
+        <Text style={{ color: c.tx2, fontSize: 15 }}>{isContinuous ? 'Continuous session' : `-${fmt(remaining)}`}</Text>
       </View>
 
       {!isContinuous && (
@@ -258,134 +199,244 @@ export default function RecordingScreen() {
         </View>
       )}
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.orbWrap}>
-          <View
-            style={[
-              styles.ring,
-              {
-                width: diam + 72,
-                height: diam + 72,
-                borderRadius: (diam + 72) / 2,
-                borderColor: `rgba(${r},${g},${b},0.18)`,
-              },
-            ]}
-          />
-          <View
-            style={[
-              styles.ring,
-              {
-                width: diam + 44,
-                height: diam + 44,
-                borderRadius: (diam + 44) / 2,
-                borderColor: `rgba(${r},${g},${b},0.32)`,
-              },
-            ]}
-          />
-          <View style={[styles.orb, { width: diam, height: diam, borderRadius: diam / 2, backgroundColor: orbColor }]}>
-            <Text style={styles.orbNum}>{live.displayLevel}</Text>
+      {/* SIXTY-SECOND follow-up: Simple View / Advanced View, remembered
+          for the next session (settings.sessionView). */}
+      <View accessibilityRole="tablist" style={[styles.switchTrack, { backgroundColor: c.bg3 }]}>
+        {[
+          ['simple', 'Simple View'],
+          ['advanced', 'Advanced View'],
+        ].map(([key, text]) => {
+          const on = view === key;
+          return (
+            <Pressable
+              key={key}
+              onPress={() => setView(key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              style={[styles.switchTab, on && [styles.switchTabOn, { backgroundColor: c.bg1 }]]}>
+              <Text
+                style={{ fontSize: 16, fontWeight: on ? '700' : '500', color: on ? c.tx1 : c.tx2 }}
+                numberOfLines={1}
+                maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+                {text}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {view === 'simple' ? (
+        <ScrollView contentContainerStyle={styles.simpleScroll} showsVerticalScrollIndicator={false}>
+          <View style={styles.simpleCenter}>
+            <BigCircle reading={reading} circle={circle} live={live} />
+            <Text style={[styles.simpleLabel, { color: labelColor }]} maxFontSizeMultiplier={1.4}>
+              {reading.label.text}
+            </Text>
+            <Text style={{ color: c.tx2, fontSize: 15 }} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.4}>
+              {reading.subline}
+            </Text>
+            <View
+              style={[
+                styles.statusChip,
+                reading.simple ? { backgroundColor: chipColors(reading.simple.tone, c).bg } : { opacity: 0 },
+              ]}>
+              <Text
+                style={{ fontSize: 16, fontWeight: '600', color: reading.simple ? chipColors(reading.simple.tone, c).fg : c.tx2 }}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+                maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+                {reading.simple ? reading.simple.text : ' '}
+              </Text>
+            </View>
           </View>
-        </View>
 
-        <View style={styles.sevRow}>
-          <Text style={[styles.sevLabel, { color: severityColor }]}>{live.liveSev}</Text>
-          <Text style={{ color: c.tx3, fontSize: 12 }}>
-            {live.displayLevel}% ({formatG(live.displayG)}) intensity
-          </Text>
-        </View>
-
-        {isContinuous && (
-          <View style={[styles.soundToggleRow, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
-            <Text style={{ color: c.tx1, fontSize: 14, fontWeight: '500' }}>Sonification</Text>
-            <Switch
-              value={audioEnabled}
-              onValueChange={(on) => actions.updateConfig({ feedbackType: on ? 'both' : 'visual' })}
-              trackColor={{ false: c.bd2, true: c.info }}
-            />
-          </View>
-        )}
-
-        {isContinuous && (
-          <Pressable
-            onPress={() => go(navigation, 'sessionCalibration')}
-            style={[styles.calibrationButton, { backgroundColor: c.bg2, borderColor: c.bd3 }]}
-            accessibilityRole="button">
-            <Text style={{ color: c.info, fontSize: 14, fontWeight: '600' }}>Edit Calibration Settings</Text>
-          </Pressable>
-        )}
-
-        {/* FIFTIETH follow-up: tremor map (both modes, with or without
-            sound) — the settings box, the in-band and actual readings, and
-            the last minute's trail — with the numbers underneath. */}
-        <View style={styles.mapWrap}>
-          <TremorMap trail={live.mapTrail || []} current={mapNow} window={mapWindow} c={c} />
-          {actualLine && (
-            <Text style={{ color: c.tx1, fontSize: 14, fontWeight: '600', textAlign: 'center', marginTop: 6 }}>{actualLine}</Text>
-          )}
-          <Text style={{ color: c.tx1, fontSize: 14, fontWeight: '600', textAlign: 'center', marginTop: actualLine ? 2 : 6 }}>
-            {inBandLine}
-          </Text>
-          {pitchByFrequency && (
-            <Text style={{ color: c.tx3, fontSize: 11, textAlign: 'center' }}>pitch follows the in-band frequency</Text>
-          )}
-        </View>
-
-        <View style={styles.axisRow}>
-          {[
-            ['X', live.liveXpct],
-            ['Y', live.liveYpct],
-            ['Z', live.liveZpct],
-          ].map(([axis, pct]) => (
-            <View key={axis} style={styles.axisItem}>
-              <Text style={{ color: c.tx3, fontSize: 11, marginBottom: 4 }}>{axis}</Text>
-              <View style={[styles.axisTrack, { backgroundColor: c.bg3 }]}>
-                <View style={[styles.axisFill, { width: `${pct}%`, backgroundColor: c.tx2 }]} />
+          <View style={styles.bottomStack}>
+            {soundControls && (
+              <View style={[styles.soundToggleRow, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+                <Text style={{ color: c.tx1, fontSize: 16, fontWeight: '500' }}>Sonification</Text>
+                <Switch value={audioEnabled} onValueChange={toggleSound} trackColor={{ false: c.bd2, true: c.info }} />
               </View>
-              <Text style={{ color: c.tx3, fontSize: 11, marginTop: 4 }}>{pct}%</Text>
-            </View>
-          ))}
-        </View>
-
-        {live.recentX.length < 8 ? (
-          <Text style={{ color: c.tx3, fontSize: 12, marginTop: 16 }}>Waiting for device data…</Text>
-        ) : (
-          <View style={[styles.sparkCard, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
-            <View style={styles.sparkHeaderRow}>
-              <Text style={{ color: c.tx3, fontSize: 11 }}>X · Y · Z waveforms</Text>
-              <Text style={{ color: severityColor, fontSize: 12, fontWeight: '600' }}>{live.liveSev}</Text>
-            </View>
-            <View style={styles.legendRow}>
-              <LegendDot color={c.danger} label="X" textColor={c.tx3} />
-              <LegendDot color={c.info} label="Y" textColor={c.tx3} />
-              <LegendDot color={c.success} label="Z" textColor={c.tx3} />
-            </View>
-            <Sparkline
-              dataX={live.dispX}
-              dataY={live.dispY}
-              dataZ={live.dispZ}
-              width={SPARK_WIDTH}
-              height={44}
-              colors={c}
-            />
+            )}
+            <Pressable onPress={handleEnd} accessibilityRole="button" style={[styles.endButton, { backgroundColor: c.bg2, borderColor: c.bd2 }]}>
+              <Text style={{ color: c.tx1, fontSize: 17, fontWeight: '700' }}>End Session</Text>
+            </Pressable>
           </View>
-        )}
+        </ScrollView>
+      ) : (
+        <ScrollView contentContainerStyle={styles.advScroll} showsVerticalScrollIndicator={false}>
+          {/* summary: small circle, label, intensity */}
+          <View style={[styles.card, styles.summaryCard, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+            <View style={[styles.smallCircle, { backgroundColor: circle.bg, borderColor: circle.border || circle.bg }]}>
+              <Text style={{ color: circle.fg, fontSize: reading.circle.text.length > 2 ? 18 : 22, fontWeight: '700' }} maxFontSizeMultiplier={1}>
+                {reading.circle.text}
+              </Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: labelColor, fontSize: 21, fontWeight: '700' }} numberOfLines={1} maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+                {reading.label.text}
+              </Text>
+              <Text style={{ color: c.tx2, fontSize: 14 }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+                {reading.subline}
+              </Text>
+            </View>
+          </View>
 
-        <Pressable
-          onPress={handleEnd}
-          style={[styles.endButton, { backgroundColor: c.bg2, borderColor: c.bd2 }]}>
-          <Text style={{ color: c.tx1, fontWeight: '700' }}>End Session</Text>
-        </Pressable>
-      </ScrollView>
+          {/* tremor map + three fixed rows */}
+          <View style={[styles.card, { backgroundColor: c.bg1, borderColor: c.bd3 }]}>
+            <View style={styles.cardHeader}>
+              <Text style={{ color: c.tx1, fontSize: 17, fontWeight: '700' }}>Tremor map</Text>
+              <Text style={{ color: c.tx2, fontSize: 13 }}>trail: last 60 s</Text>
+            </View>
+            <TremorMap trail={live.mapTrail || []} current={hasMapData ? mapNow : null} window={win} c={c} />
+            <Text
+              style={[styles.row1, { color: toneColor(reading.row1.tone, c) }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+              {reading.row1.text}
+            </Text>
+            <Text
+              style={[styles.row2, { color: c.tx1 }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+              maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+              {reading.row2 || ' '}
+            </Text>
+            <TremorMapLegend c={c} />
+          </View>
 
+          {/* raw motion */}
+          <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+            <View style={styles.cardHeader}>
+              <Text style={{ color: c.tx1, fontSize: 16, fontWeight: '700' }}>Raw motion</Text>
+              <View style={styles.legendRow}>
+                <LegendDot color={c.danger} label="X" textColor={c.tx2} />
+                <LegendDot color={c.info} label="Y" textColor={c.tx2} />
+                <LegendDot color={c.success} label="Z" textColor={c.tx2} />
+              </View>
+            </View>
+            {live.recentX.length < 8 ? (
+              <Text style={{ color: c.tx2, fontSize: 13, height: 56, textAlignVertical: 'center', lineHeight: 56, textAlign: 'center' }}>
+                Waiting for device data…
+              </Text>
+            ) : (
+              <Sparkline dataX={live.dispX} dataY={live.dispY} dataZ={live.dispZ} width={SPARK_WIDTH} height={56} colors={c} />
+            )}
+          </View>
+
+          {soundControls && (
+            <View style={styles.buttonRow}>
+              <Pressable
+                onPress={() => toggleSound(!audioEnabled)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: audioEnabled }}
+                style={[
+                  styles.halfButton,
+                  audioEnabled ? { backgroundColor: c.bgInfo, borderColor: c.info } : { backgroundColor: c.bg2, borderColor: c.bd3 },
+                ]}>
+                <Text style={{ color: audioEnabled ? c.info : c.tx1, fontSize: 16, fontWeight: '700' }} maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+                  {audioEnabled ? 'Sound: On' : 'Sound: Off'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => go(navigation, 'sessionCalibration')}
+                accessibilityRole="button"
+                style={[styles.halfButton, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+                <Text style={{ color: c.info, fontSize: 16, fontWeight: '700' }} numberOfLines={1} maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+                  Edit Calibration
+                </Text>
+              </Pressable>
+            </View>
+          )}
+
+          <Pressable onPress={handleEnd} accessibilityRole="button" style={[styles.endButton, { backgroundColor: c.bg2, borderColor: c.bd2 }]}>
+            <Text style={{ color: c.tx1, fontSize: 17, fontWeight: '700' }}>End Session</Text>
+          </Pressable>
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
+}
+
+// SIXTY-SECOND follow-up: the Simple View's large circle. Its size still
+// eases with the display level (as before); colour and text follow the
+// reading's state (see describeReading()).
+function BigCircle({ reading, circle, live }) {
+  const level = reading.kind === 'over' ? 100 : reading.kind === 'zone' || reading.kind === 'ceiling' ? live.displayLevel || 0 : 0;
+  const diam = orbSize(level, SCREEN_WIDTH);
+  const ring = circle.ring;
+  return (
+    <View style={styles.orbWrap}>
+      <View style={[styles.ring, { width: diam + 72, height: diam + 72, borderRadius: (diam + 72) / 2, borderColor: `rgba(${ring},0.18)` }]} />
+      <View style={[styles.ring, { width: diam + 44, height: diam + 44, borderRadius: (diam + 44) / 2, borderColor: `rgba(${ring},0.32)` }]} />
+      <View
+        style={[
+          styles.orb,
+          { width: diam, height: diam, borderRadius: diam / 2, backgroundColor: circle.bg },
+          circle.border && { borderWidth: 1.5, borderColor: circle.border },
+        ]}>
+        <Text style={[styles.orbNum, { color: circle.fg }]} maxFontSizeMultiplier={1}>
+          {reading.circle.text}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+const hexRgb = (hex) => {
+  const h = String(hex).replace('#', '');
+  if (h.length !== 6) return '128,128,128';
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(',');
+};
+
+// Circle colours per state. 'level' keeps the existing green→amber shading
+// by intensity; 'inverse' (out of zone) is the text colour, so it's dark in
+// light mode and light in dark mode.
+export function circleColors(tone, level, c) {
+  if (tone === 'level') {
+    const [r, g, b] = orbRGB(Math.max(0, Math.min(100, level || 0)));
+    return { bg: `rgb(${r},${g},${b})`, fg: '#ffffff', ring: `${r},${g},${b}` };
+  }
+  if (tone === 'danger') return { bg: c.danger, fg: '#ffffff', ring: hexRgb(c.danger) };
+  if (tone === 'grey') return { bg: '#6b6b6b', fg: '#ffffff', ring: '107,107,107' };
+  if (tone === 'inverse') return { bg: c.tx1, fg: c.bg1, ring: hexRgb(c.tx1) };
+  return { bg: c.bg3, fg: c.tx2, border: c.bd2, ring: '128,128,128' }; // 'empty' (waiting)
+}
+
+// Text colours: severity names keep their existing colours.
+export function toneColor(tone, c) {
+  switch (tone) {
+    case 'None':
+      return c.success;
+    case 'Mild':
+    case 'info':
+      return c.info;
+    case 'Moderate':
+      return c.warning;
+    case 'High':
+    case 'danger':
+      return c.danger;
+    case 'tx2':
+      return c.tx2;
+    default:
+      return c.tx1;
+  }
+}
+
+function chipColors(tone, c) {
+  if (tone === 'info') return { bg: c.bgInfo, fg: c.info };
+  if (tone === 'danger') return { bg: c.bgDanger, fg: c.danger };
+  return { bg: c.bg3, fg: c.tx1 };
 }
 
 function LegendDot({ color, label, textColor }) {
   return (
     <View style={styles.legendDotWrap}>
       <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <Text style={{ color: textColor, fontSize: 10 }}>{label}</Text>
+      <Text style={{ color: textColor, fontSize: 13 }}>{label}</Text>
     </View>
   );
 }
@@ -398,51 +449,53 @@ function persistSaveLatest(state) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', paddingTop: 12 },
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', paddingHorizontal: 20 },
-  progressTrack: { width: '90%', height: 3, borderRadius: 2, marginTop: 8, marginBottom: 8, overflow: 'hidden' },
+  container: { flex: 1, paddingTop: 12 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: PAGE_PAD + 4 },
+  progressTrack: { marginHorizontal: PAGE_PAD, height: 3, borderRadius: 2, marginTop: 8, overflow: 'hidden' },
   progressFill: { height: '100%' },
-  scroll: { flexGrow: 1, alignItems: 'center', paddingBottom: 28, width: '100%' },
-  orbWrap: { alignItems: 'center', justifyContent: 'center', height: 260 },
-  ring: { position: 'absolute', borderWidth: 1 },
+  // SIXTY-SECOND follow-up: view switch
+  switchTrack: { flexDirection: 'row', marginHorizontal: PAGE_PAD, marginTop: 12, padding: 4, borderRadius: radii.lg, gap: 4 },
+  switchTab: { flex: 1, minHeight: 44, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  switchTabOn: { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
+  // Simple View
+  simpleScroll: { flexGrow: 1, paddingHorizontal: PAGE_PAD, paddingTop: 8, paddingBottom: 28 },
+  simpleCenter: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12 },
+  orbWrap: { alignItems: 'center', justifyContent: 'center', height: 290, width: '100%' },
+  ring: { position: 'absolute', borderWidth: 1.5 },
   orb: { alignItems: 'center', justifyContent: 'center' },
-  orbNum: { color: '#fff', fontSize: 32, fontWeight: '700' },
-  sevRow: { flexDirection: 'row', alignItems: 'baseline', gap: 10 },
+  orbNum: { fontSize: 48, fontWeight: '700' },
+  simpleLabel: { fontSize: 26, fontWeight: '700' },
+  statusChip: {
+    marginTop: 10,
+    height: 46,
+    maxWidth: '100%',
+    paddingHorizontal: 18,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bottomStack: { gap: 10 },
   soundToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    width: '90%',
-    marginTop: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    minHeight: 56,
+    paddingHorizontal: 16,
     borderRadius: radii.lg,
     borderWidth: 1,
   },
-  calibrationButton: {
-    width: '90%',
-    marginTop: 10,
-    paddingVertical: 12,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    alignItems: 'center',
-  },
-  mapWrap: { width: '94%', marginTop: 10 },
-  sevLabel: { fontSize: 18, fontWeight: '700' },
-  axisRow: { flexDirection: 'row', gap: 16, marginTop: 24, width: '80%' },
-  axisItem: { flex: 1, alignItems: 'center' },
-  axisTrack: { width: '100%', height: 6, borderRadius: 3, overflow: 'hidden' },
-  axisFill: { height: '100%' },
-  sparkCard: { width: '90%', marginTop: 24, padding: 12, borderRadius: radii.lg, borderWidth: 1 },
-  sparkHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  legendRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  legendDotWrap: { flexDirection: 'row', alignItems: 'center', marginRight: 12 },
-  legendDot: { width: 10, height: 2, borderRadius: 1, marginRight: 4 },
-  endButton: {
-    marginTop: 24,
-    paddingVertical: 14,
-    paddingHorizontal: 40,
-    borderRadius: radii.xl,
-    borderWidth: 1,
-  },
+  // Advanced View
+  advScroll: { paddingHorizontal: PAGE_PAD, paddingTop: 12, paddingBottom: 28, gap: 12 },
+  card: { borderRadius: radii.xl, borderWidth: 1, padding: 12 },
+  summaryCard: { flexDirection: 'row', alignItems: 'center', gap: 14, height: 80 },
+  smallCircle: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  row1: { fontSize: 16, fontWeight: '700', textAlign: 'center', height: 24, lineHeight: 24, marginTop: 4 },
+  row2: { fontSize: 14.5, textAlign: 'center', height: 21, lineHeight: 21 },
+  legendRow: { flexDirection: 'row', alignItems: 'center' },
+  legendDotWrap: { flexDirection: 'row', alignItems: 'center', marginLeft: 12 },
+  legendDot: { width: 10, height: 10, borderRadius: 5, marginRight: 5 },
+  buttonRow: { flexDirection: 'row', gap: 10 },
+  halfButton: { flex: 1, minHeight: 52, borderRadius: radii.lg, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  endButton: { minHeight: 56, borderRadius: radii.lg, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 });

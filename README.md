@@ -3545,6 +3545,82 @@ double runs; packets stopped: timers carry on; a 5 s timed session ends at
 disconnected without their timer. `test6.mjs` now feeds packets on a 20 ms
 clock. 582 passed.
 
+## Sixty-second follow-up — Recording screen: Simple View and Advanced View
+
+From tester feedback (the map is too small for some, too busy for others; the
+waveform is rarely watched) and the team's design (`SteadyPoint_Advanced_View.pdf`
++ design notes). iOS and Android share all of it — no platform branches.
+
+**Two views, switched at the top** ("Simple View | Advanced View"). The
+choice is saved (`settings.sessionView`, `'simple'` by default and for
+existing users) and the next session opens in it.
+- **Simple View:** the large circle, its label and intensity line, one
+  status line (fixed height), the Sonification switch (continuous sessions),
+  End Session. No map, no waveform, no Edit Calibration.
+- **Advanced View:** a small summary card (circle, label, intensity line);
+  the tremor map with three fixed rows under it; the waveform ("Raw
+  motion"); "Sound: On/Off" and "Edit Calibration" side by side (continuous
+  sessions); End Session.
+- Top right: "Continuous session", or the countdown for a timed session
+  (which still has its progress bar).
+- Removed: the X/Y/Z percentage bars, the "pitch follows the in-band
+  frequency" caption, and the 47th–50th "in-band / actual" text lines.
+
+**Reading states — `src/utils/sessionReading.js` (new).** One function
+classifies each reading, so the circle, the rows, the Simple status line and
+every map dot agree:
+
+| state | circle | row 1 (colour) | row 2 |
+|---|---|---|---|
+| in zone | intensity, green→amber | `4.7 Hz · .041 g · intensity 34` (blue) | `inside your tremor zone (4–8 Hz)` |
+| above 100 | red 100, "High" | `5.6 Hz · .48 g · intensity 100 (max)` (red) | `above your level 100 — still counts as 100` |
+| below threshold | grey 0, "None" | `5.2 Hz · .004 g · intensity 0` | `below your tremor threshold — counts as 0` |
+| out of zone | "—", "Out of zone" | `2.4 Hz · .03 g` | `1.6 Hz below your tremor zone — no sound` (or above) |
+| above upper limit | intensity | `… · intensity 70` | `above your upper limit — no sound` |
+| band filtering off | — | — | `all frequencies count (band filtering off)` (never out of zone) |
+| no data yet | "—", "Starting…" | `—` | — ("Waiting for device data…" under the label) |
+
+Rules: in zone = in-band g above the noise floor with an in-band frequency
+(any frequency with band filtering off); above 100 = in-band g at or above
+full scale; out of zone = band filtering on and either spill from outside the
+band or the strongest frequency outside the band with nothing sounding in it
+(a small in-band tremor under a big sway is in zone — it's what sounds);
+otherwise below threshold. The circle's number in the zone is the eased
+display level (never 0 there); the Simple View circle still grows with it.
+
+**Tremor map — `src/components/TremorMap.js` (redrawn).** Intensity axis on
+the left (0 at the noise floor, 100 at full scale), g on the right; red dashed
+"your level 100" line, grey dashed 0 line; red shading above 100 inside the
+band, grey shading below the floor; "your tremor zone" label; with an upper
+limit, a dotted line and grey above it (no red if it's below full scale). One
+dot per reading coloured by state — blue in zone, red above your 100, grey
+filled below threshold, hollow out of zone (and above the upper limit); the
+separate "actual" dot is gone (an out-of-zone reading shows where the motion
+is). A reading with no frequency (device still) has no dot. Intensity 10 and
+50 are labelled at their true heights — on the log scale 50 sits near the top
+(0.18 g with the default settings), not mid-chart as in the design. Size
+follows the screen width (aspect 340:300). Legend: two fixed rows.
+
+**Fixed-height text.** The rows, status line and switch are one line, fixed
+height, shrink to fit, and grow with the system text size only to 1.2×
+(`maxFontSizeMultiplier` — iOS Dynamic Type and Android Font size).
+
+Visual check (not in `npm test`): `cd tests/render && node viewMap.mjs` writes
+`map.html` with the real map in each state, light and dark.
+
+Tests: `logic/test17.mjs` (new, 43) — every state and edge case above, the
+view setting, dot classification. `render/testRec.mjs` — the 49th–50th map
+text checks replaced by 29 view checks run twice, as iOS and as Android
+(switch + saved view, top bar, Simple without Edit Calibration, each state's
+rows/colours/dots/status line, upper limit, band off, waiting, trail colours,
+fixed rows). 664 passed.
+
+Changed: `src/screens/RecordingScreen.js`, `src/components/TremorMap.js`,
+`src/utils/sessionReading.js` (new), `src/state/initialState.js`,
+`android/gradle.properties` (version code 62), `tests/logic/test17.mjs` (new),
+`tests/render/testRec.mjs`, `tests/render/viewMap.mjs`, `tests/run-all.mjs`,
+`README.md`, `HANDOFF.md`.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop
