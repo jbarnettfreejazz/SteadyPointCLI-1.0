@@ -70,12 +70,13 @@ export function classifyReading(p, win) {
   return { kind: 'below', hz: af != null && (!win.bandOn || inBand(af, win)) ? af : null, g: pg };
 }
 
-// ".041 g" / ".48 g" / "1.24 g" (3 decimals below 0.1 g, as elsewhere).
+// ".041 g" / ".480 g" / "1.240 g" — SIXTY-THIRD follow-up: always three
+// decimals (the design's ".480 g"), so the g field keeps its width.
 export function fmtGSpaced(g) {
   const v = isNum(g) && g > 0 ? g : 0;
-  return `${v.toFixed(v < 0.1 ? 3 : 2).replace(/^0(?=\.)/, '')} g`;
+  return `${v.toFixed(3).replace(/^0(?=\.)/, '')} g`;
 }
-// ".041g" — the summary line's existing style ("34% (.041g) intensity").
+// ".041g" — the summary line's style ("34% (.041g) intensity").
 export function fmtGTight(g) {
   return fmtGSpaced(g).replace(' g', 'g');
 }
@@ -92,19 +93,31 @@ const fmtEdge = (hz) => String(Math.round(hz * 10) / 10);
 //                                'danger', 'grey', 'inverse', 'empty'
 //   label:   { text, tone }      tone: a severity colour name or 'tx1'/'tx2'
 //   subline: string              under the label
-//   row1:    { text, tone }      first line under the map; tone 'info' | 'danger' | 'tx1'
+//   row1:    { hz, g, intensity, text, tone }
+//                                first line under the map, as three fixed
+//                                fields (SIXTY-THIRD follow-up) — "4.7 Hz",
+//                                ".041 g", "intensity 34" — plus the three
+//                                joined with " · " (text, for screen readers
+//                                and tests); tone 'info' | 'danger' | 'tx1'.
+//                                A missing value shows as "--".
 //   row2:    string              second line under the map
 //   simple:  { text, tone } | null   Simple View status line; tone 'info' | 'danger' | 'neutral'
 //   level:   number | null       the intensity number shown (null: none)
+const NONE = '--';
+const row = (hz, g, intensity, tone) => {
+  const f = { hz: hz != null ? `${fmtHz(hz)} Hz` : `${NONE} Hz`, g: g != null ? fmtGSpaced(g) : `${NONE} g`, intensity: `intensity ${intensity}` };
+  return { ...f, text: `${f.hz} · ${f.g} · ${f.intensity}`, tone };
+};
+
 export function describeReading(live, win) {
   const hasData = Array.isArray(live?.mapTrail) && live.mapTrail.length > 0;
   if (!hasData) {
     return {
       kind: 'waiting',
-      circle: { text: '—', tone: 'empty' },
+      circle: { text: NONE, tone: 'empty' },
       label: { text: 'Starting…', tone: 'tx2' },
       subline: 'Waiting for device data…',
-      row1: { text: '—', tone: 'tx1' },
+      row1: row(null, null, NONE, 'tx1'),
       row2: 'Waiting for device data…',
       simple: null,
       level: null,
@@ -112,7 +125,6 @@ export function describeReading(live, win) {
   }
   const now = { af: live.actualFreqHz, ag: live.liveRmsAllG, pf: live.pitchFreqHz, pg: live.liveRmsG };
   const { kind, hz, g } = classifyReading(now, win);
-  const hzPart = hz != null ? `${fmtHz(hz)} Hz · ` : '';
   const zoneText = win.bandOn ? `(${fmtEdge(win.minHz)}–${fmtEdge(win.maxHz)} Hz)` : '';
   // The circle and rows show the same number. While in the zone it's the
   // display level (eased toward the reading, as before), never shown as 0
@@ -127,7 +139,7 @@ export function describeReading(live, win) {
       circle: { text: '100', tone: 'danger' },
       label: { text: 'High', tone: 'danger' },
       subline: `>100% (${fmtGTight(g)}) intensity`,
-      row1: { text: `${hzPart}${fmtGSpaced(g)} · intensity 100 (max)`, tone: 'danger' },
+      row1: row(hz, g, '>100', 'danger'),
       row2: 'above your level 100 — still counts as 100',
       simple: { text: 'Above your level 100 — counts as 100', tone: 'danger' },
       level: 100,
@@ -139,7 +151,7 @@ export function describeReading(live, win) {
       circle: { text: String(shown), tone: 'level' },
       label: { text: sevLabel, tone: sevLabel },
       subline: `${shown}% (${fmtGTight(displayG)}) intensity`,
-      row1: { text: `${hzPart}${fmtGSpaced(g)} · intensity ${shown}`, tone: 'tx1' },
+      row1: row(hz, g, shown, 'tx1'),
       row2: 'above your upper limit — no sound',
       simple: { text: 'Above your upper limit — no sound', tone: 'neutral' },
       level: shown,
@@ -151,7 +163,7 @@ export function describeReading(live, win) {
       circle: { text: String(shown), tone: 'level' },
       label: { text: sevLabel, tone: sevLabel },
       subline: `${shown}% (${fmtGTight(displayG)}) intensity`,
-      row1: { text: `${hzPart}${fmtGSpaced(displayG)} · intensity ${shown}`, tone: 'info' },
+      row1: row(hz, displayG, shown, 'info'),
       row2: win.bandOn ? `inside your tremor zone ${zoneText}` : 'all frequencies count (band filtering off)',
       simple: {
         text: win.bandOn ? `Inside your tremor zone ${zoneText}` : 'All frequencies count',
@@ -172,10 +184,12 @@ export function describeReading(live, win) {
     }
     return {
       kind,
-      circle: { text: '—', tone: 'inverse' },
+      // SIXTY-THIRD follow-up: same format as the other states, with "--"
+      // where nothing is measured in the zone (design v2, page 4).
+      circle: { text: NONE, tone: 'inverse' },
       label: { text: 'Out of zone', tone: 'tx1' },
-      subline: 'Outside your frequency range · no sound',
-      row1: { text: `${hzPart}${fmtGSpaced(g)}`, tone: 'tx1' },
+      subline: `${NONE}% (${NONE}g) intensity`,
+      row1: row(hz, g, NONE, 'tx1'),
       row2,
       simple: { text: simple, tone: 'neutral' },
       level: null,
@@ -187,7 +201,7 @@ export function describeReading(live, win) {
     circle: { text: '0', tone: 'grey' },
     label: { text: 'None', tone: 'tx2' },
     subline: `0% (${fmtGTight(g)}) intensity`,
-    row1: { text: `${hzPart}${fmtGSpaced(g)} · intensity 0`, tone: 'tx1' },
+    row1: row(hz, g, 0, 'tx1'),
     row2: 'below your tremor threshold — counts as 0',
     simple: { text: 'Below your tremor threshold', tone: 'neutral' },
     level: 0,

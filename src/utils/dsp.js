@@ -467,7 +467,7 @@ export function tremorPeakFrequency(xs, ys, zs, sr, minHz, maxHz) {
 // own. A genuine tremor right at the edge is still a peak (the spectrum
 // falls on the far side), so it's not flagged. Returns { hz, edgeSpill } or
 // null.
-export function tremorPeakInfo(xs, ys, zs, sr, minHz, maxHz) {
+export function tremorPeakInfo(xs, ys, zs, sr, minHz, maxHz, interiorShare = SPILL_INTERIOR_PEAK_SHARE) {
   const n = Math.min(xs.length, ys.length, zs.length);
   if (n < 16 || !(maxHz > minHz)) return null;
   let padN = 1;
@@ -499,11 +499,46 @@ export function tremorPeakInfo(xs, ys, zs, sr, minHz, maxHz) {
     const denom = la - 2 * lb + lc;
     if (denom < 0) offset = Math.max(-0.5, Math.min(0.5, (0.5 * (la - lc)) / denom));
   }
-  const edgeSpill =
+  let edgeSpill =
     (best === kLo && kLo - 1 >= 1 && power[kLo - 1] > power[best]) ||
     (best === kHi && kHi + 1 < padN / 2 && power[kHi + 1] > power[best]);
+  // SIXTY-THIRD follow-up: only spill when there's no real peak inside the
+  // band. Slow hand wander (~0.1–0.4 Hz) leaks into a low band edge such as
+  // 0.5 Hz and could out-power a genuine in-band tremor at that edge, which
+  // muted the tremor and drew its dot hollow inside the box. Now, if the
+  // edge is only a slope from outside, the strongest interior local maximum
+  // wins — provided it carries at least interiorShare of the edge's power
+  // (so window ripple and sensor noise can't stand in for a tremor that is
+  // really outside the band).
+  if (edgeSpill) {
+    const edgePower = power[best];
+    let inner = -1;
+    for (let k = kLo + 1; k < kHi; k++) {
+      if (power[k] > power[k - 1] && power[k] >= power[k + 1] && power[k] >= interiorShare * edgePower) {
+        if (inner < 0 || power[k] > power[inner]) inner = k;
+      }
+    }
+    if (inner >= 0) {
+      best = inner;
+      edgeSpill = false;
+      offset = 0;
+      const a2 = power[best - 1];
+      const b2 = power[best];
+      const c2 = power[best + 1];
+      if (a2 > 0 && c2 > 0) {
+        const la = Math.log(a2);
+        const lb = Math.log(b2);
+        const lc = Math.log(c2);
+        const denom = la - 2 * lb + lc;
+        if (denom < 0) offset = Math.max(-0.5, Math.min(0.5, (0.5 * (la - lc)) / denom));
+      }
+    }
+  }
   return { hz: Math.min(maxHz, Math.max(minHz, (best + offset) * binHz)), edgeSpill };
 }
+// Share of a spilling edge's power an interior peak needs to count as the
+// band's own tremor (SIXTY-THIRD follow-up; tuned in README's 63rd section).
+export const SPILL_INTERIOR_PEAK_SHARE = 0.1;
 
 // Linearly maps value from [srcMin,srcMax] into [dstMin,dstMax], clamping
 // out-of-range input first. Mirrors the reference's map_to_audible().

@@ -1,4 +1,4 @@
-# SteadyPoint — handoff note (Nov 10, 2026)
+# SteadyPoint — handoff note (Nov 11, 2026)
 
 React Native 0.81.6 app (old architecture; upgraded from 0.75.4 in the
 Fifty-fourth follow-up — do not go past 0.81.x, see README) (repo root), on iOS and — since the Fifty-second
@@ -25,6 +25,9 @@ names (e.g. `FIFTIETH follow-up`).
 - Run `tests/` (`cd tests && npm install && npm test`) after changes; add
   checks for new behaviour. See `tests/README.md`. Two logic tests need the
   app's own packages: `npm install` in the project root first.
+- **Deliver the full zip and unzip it whole into the TestFlight/git folder**
+  (Nov 10: copying changed files one by one missed `src/navigation/go.js`
+  and broke Archive).
 - **Every change goes to both iOS and Android** (James, Nov 9): implement on
   both, add tests that run as both (`globalThis.__os`), give a device test
   list split by platform, and set `steadypointVersionCode` to the round
@@ -38,7 +41,7 @@ only when the tremor is inside a chosen frequency band and intensity
 window, then goes about his day waiting for audio nudges. The **tremor
 map** (Recording screen, Advanced View since the 62nd) shows the tremor zone
 box, intensity 0/100 lines, one dot per reading coloured by state (blue in
-zone, red above 100, grey below threshold, hollow out of zone) and a 60 s
+zone, red above 100, hollow otherwise — 63rd) and a 60 s
 trail; three fixed rows under it explain the current reading.
 
 ## Device-tested OK (recent rounds)
@@ -51,6 +54,15 @@ trail; three fixed rows under it explain the current reading.
 - 57th: Edit Calibration during a session as a screen (Android + iOS).
 
 ## Waiting on device testing
+
+00. **Tester fixes + design v2 rows (63rd)** — iOS and Android. With the
+   tester's settings (full scale 1.00, floor 0, band 0.5–12): dots inside the
+   box are blue (no hollow ones from hand wander), sound starts as soon as a
+   reading enters the box (quiet but audible at low intensity), floor at the
+   bottom, axis from 0 Hz, note under Minimum tremor band. Default settings:
+   3.5 Hz with 4–8 band still silent; row 1 as three steady fields; `--`
+   formats out of zone; hollow dot below threshold; three-entry legend.
+   Listen for overall loudness — low intensities are much louder than before.
 
 0. **Simple View / Advanced View (62nd)** — on iOS and Android: switch
    views; the choice is kept for the next session (also after restarting

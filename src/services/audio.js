@@ -1,4 +1,5 @@
 import { AudioContext } from 'react-native-audio-api';
+import { volumeForLevel, levelForVolume } from '../utils/volumeCurve';
 import { samplePaths } from './bundledSamples';
 
 // ══════════════════════════════════════════════════════
@@ -933,6 +934,8 @@ const BRIGHT_EPSILON = 0.02;
 const CUSTOM_LEVEL_SMOOTHING_ALPHA = 0.05;
 let customSmoothedLevel = null;
 
+// SIXTY-THIRD follow-up: volume curve — see utils/volumeCurve.js.
+
 // FORTY-THIRD follow-up: during a session, sound now fades out over
 // REST_FADE_SEC when intensity reaches 0, instead of stopping instantly
 // (the instant stop was audible as an abrupt cut — e.g. as tremor drifts
@@ -1243,7 +1246,7 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin,
       // fade and push it straight away (lastSent.gain = -1 bypasses
       // GAIN_EPSILON, which would otherwise leave the volume stuck up to
       // 0.03 below where it was).
-      customSmoothedLevel = restSavedLevel ?? (config.maxGain > 0 ? Math.max(0, lastSent.gain) / config.maxGain : 0);
+      customSmoothedLevel = restSavedLevel ?? (config.maxGain > 0 ? levelForVolume(Math.max(0, lastSent.gain) / config.maxGain) : 0);
       lastSent.gain = -1;
       restFade = null;
       restSavedLevel = null;
@@ -1290,7 +1293,7 @@ export function updateAudio(recentX, recentY, recentZ, tremorLevel, sr, freqWin,
     lastCustomPitchUpdateTime = nowMs;
     if (customSessionStartMs === 0) customSessionStartMs = nowMs;
 
-    const gain = customSmoothedLevel * config.maxGain;
+    const gain = volumeForLevel(customSmoothedLevel) * config.maxGain; // SIXTY-THIRD follow-up: volume curve
     if (atRest) {
       // ELEVENTH follow-up: reported bug — after a long/intense tremor,
       // sound could still be heard at what the UI already showed as 0

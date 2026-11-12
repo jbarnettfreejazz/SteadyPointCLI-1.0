@@ -8,6 +8,11 @@ import { DEFAULT_FULL_SCALE_G, DEFAULT_NOISE_FLOOR_G } from './dsp';
 export const TYPICAL_TREMOR_MIN_HZ = 3;
 export const TYPICAL_TREMOR_MAX_HZ = 12;
 
+// SIXTY-THIRD follow-up: below this, a reading's ~2 s window can't reliably
+// tell tremor from slow hand movement. Still allowed (useful for seeing where
+// the band sits among all readings), with a note.
+export const RELIABLE_BAND_MIN_HZ = 1;
+
 // Smallest gap between the band's minimum and maximum.
 export const MIN_BAND_WIDTH_HZ = 1;
 
@@ -197,7 +202,9 @@ export function validateCalibration(entries) {
   }
 
   // Gentle warnings outside the typical tremor range (still allowed).
-  if (!errors.tremorBandMinHz && values.tremorBandMinHz != null && values.tremorBandMinHz < TYPICAL_TREMOR_MIN_HZ) {
+  if (!errors.tremorBandMinHz && values.tremorBandMinHz != null && values.tremorBandMinHz < RELIABLE_BAND_MIN_HZ) {
+    warnings.tremorBandMinHz = `Below ${RELIABLE_BAND_MIN_HZ} Hz, slow hand movement can't be reliably told apart from tremor, so readings near this edge may be unreliable.`;
+  } else if (!errors.tremorBandMinHz && values.tremorBandMinHz != null && values.tremorBandMinHz < TYPICAL_TREMOR_MIN_HZ) {
     warnings.tremorBandMinHz = `Below the typical tremor range (${TYPICAL_TREMOR_MIN_HZ}–${TYPICAL_TREMOR_MAX_HZ} Hz)`;
   }
   if (!errors.tremorBandMaxHz && values.tremorBandMaxHz != null && values.tremorBandMaxHz > TYPICAL_TREMOR_MAX_HZ) {

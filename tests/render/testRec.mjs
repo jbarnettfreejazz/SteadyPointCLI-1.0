@@ -120,6 +120,14 @@ const trailDots = () => circles().filter((n) => n.props.r === 3.5);
 const styleOf = (n) => [].concat(n.props.style).flat(3).filter(Boolean).reduce((a, x) => ({ ...a, ...x }), {});
 const textNode = (s) => r.root.findAll((n) => n.type === 'Text' && [].concat(n.props.children).join('') === s)[0];
 const C = { info: '#2563eb', danger: '#dc2626', tx1: '#0f0f0f' }; // light theme (mocks)
+// SIXTY-THIRD follow-up: row 1 is three fixed fields (+ two separators) in a
+// View whose accessibilityLabel is the joined text.
+const row1Of = () => {
+  const v = r.root.findAll((n) => n.type === 'View' && typeof n.props.accessibilityLabel === 'string' && n.props.accessibilityLabel.includes(' · ') && n.props.accessibilityLabel.includes('intensity'))[0];
+  if (!v) return { text: null, fields: [], colors: [] };
+  const fields = v.findAll((n) => n.type === 'Text');
+  return { text: v.props.accessibilityLabel, fields: fields.map((f) => [].concat(f.props.children).join('')), colors: fields.map((f) => styleOf(f).color), nodes: fields };
+};
 
 const IN_ZONE = { pitchFreqHz: 4.7, actualFreqHz: 4.7, liveRmsG: 0.041, liveRmsAllG: 0.05 };
 const OVER = { pitchFreqHz: 5.6, actualFreqHz: 5.6, liveRmsG: 0.48, liveRmsAllG: 0.5, displayLevel: 100, displayG: 0.48, liveSev: 'High' };
@@ -153,29 +161,31 @@ for (const os of ['ios', 'android']) {
   // (i) in zone
   check(P + 'Simple in zone: circle, label, status', t.includes('34 | Mild | 34% (.041g) intensity | Inside your tremor zone (4–8 Hz)'), t.slice(0, 400));
   show(ADV, IN_ZONE);
-  check(P + 'Adv in zone: rows', t.includes('4.7 Hz · .041 g · intensity 34 | inside your tremor zone (4–8 Hz)'), t);
-  check(P + 'Adv in zone: row 1 blue', styleOf(textNode('4.7 Hz · .041 g · intensity 34')).color === C.info);
+  check(P + 'Adv in zone: rows', row1Of().text === '4.7 Hz · .041 g · intensity 34' && t.includes('intensity 34 | inside your tremor zone (4–8 Hz)'), row1Of().text);
+  check(P + 'Adv in zone: three fields + separators', JSON.stringify(row1Of().fields) === JSON.stringify(['4.7 Hz', '·', '.041 g', '·', 'intensity 34']), JSON.stringify(row1Of().fields));
+  check(P + 'Adv in zone: row 1 blue', row1Of().colors.every((col) => col === C.info));
+  check(P + 'Adv: fields fixed width', JSON.stringify(row1Of().nodes.map((n) => styleOf(n).width)) === JSON.stringify(['27%', '5%', '25%', '5%', '38%']));
   check(P + 'Adv in zone: blue dot', nowDot().length === 1 && nowDot()[0].props.fill === C.info);
-  check(P + 'Adv: legend', t.includes('in zone | above your 100 | below threshold | out of zone'));
+  check(P + 'Adv: legend, three entries', t.includes('in zone | above your 100 | out of zone') && !t.includes('below threshold'));
   check(P + 'Adv: map labels', t.includes('your level 100') && t.includes('your tremor') && t.includes('Intensity') && t.includes('4.0') && t.includes('8.0'));
 
   // (ii) above 100
   show(ADV, OVER);
-  check(P + 'Adv over: rows', t.includes('5.6 Hz · .48 g · intensity 100 (max) | above your level 100 — still counts as 100'), t);
-  check(P + 'Adv over: row 1 red, red dot, High', styleOf(textNode('5.6 Hz · .48 g · intensity 100 (max)')).color === C.danger && nowDot()[0].props.fill === C.danger && t.includes('100 | High | >100% (.48g) intensity'));
+  check(P + 'Adv over: rows', row1Of().text === '5.6 Hz · .480 g · intensity >100' && t.includes('above your level 100 — still counts as 100'), row1Of().text);
+  check(P + 'Adv over: row 1 red, red dot, High', row1Of().colors.every((col) => col === C.danger) && nowDot()[0].props.fill === C.danger && t.includes('100 | High | >100% (.480g) intensity'));
   show(SIMPLE, OVER);
   check(P + 'Simple over: status', t.includes('Above your level 100 — counts as 100'));
 
   // (iii) below threshold — intensity shown as 0, grey filled dot
   show(ADV, BELOW);
-  check(P + 'Adv below: rows', t.includes('5.2 Hz · .004 g · intensity 0 | below your tremor threshold — counts as 0'), t);
-  check(P + 'Adv below: grey filled dot, black row 1', nowDot()[0].props.fill !== 'none' && nowDot()[0].props.fill !== C.info && styleOf(textNode('5.2 Hz · .004 g · intensity 0')).color === C.tx1);
+  check(P + 'Adv below: rows', row1Of().text === '5.2 Hz · .004 g · intensity 0' && t.includes('below your tremor threshold — counts as 0'), row1Of().text);
+  check(P + 'Adv below: hollow dot, black row 1', nowDot()[0].props.fill === 'none' && row1Of().colors.every((col) => col === C.tx1));
   check(P + 'Adv below: None, 0%', t.includes('0 | None | 0% (.004g) intensity'));
 
   // (iv) out of zone — distance
   show(ADV, OUT);
-  check(P + 'Adv out: rows', t.includes('2.4 Hz · .030 g | 1.6 Hz below your tremor zone — no sound'), t);
-  check(P + 'Adv out: hollow dot, dash circle', nowDot()[0].props.fill === 'none' && t.includes('— | Out of zone | Outside your frequency range · no sound'));
+  check(P + 'Adv out: rows', row1Of().text === '2.4 Hz · .030 g · intensity --' && t.includes('1.6 Hz below your tremor zone — no sound'), row1Of().text);
+  check(P + 'Adv out: hollow dot, -- format', nowDot()[0].props.fill === 'none' && t.includes('-- | Out of zone | --% (--g) intensity'));
   show(SIMPLE, OUT);
   check(P + 'Simple out: status', t.includes('2.4 Hz · below your tremor zone'));
 
@@ -186,6 +196,21 @@ for (const os of ['ios', 'android']) {
   // band filtering off
   show({ sessionView: 'advanced', bandFilterEnabled: false }, { pitchFreqHz: 2.1, actualFreqHz: 2.1, liveRmsG: 0.05, liveRmsAllG: 0.05 });
   check(P + 'band off: all frequencies count', t.includes('all frequencies count (band filtering off)') && !t.includes('4.0'), t);
+
+  // SIXTY-THIRD follow-up: the tester's settings — noise floor 0, band 0.5–12
+  show({ sessionView: 'advanced', bandFilterEnabled: true, tremorBandMinHz: 0.5, tremorBandMaxHz: 12, noiseFloorG: 0, fullScaleG: 1 }, { pitchFreqHz: 4, actualFreqHz: 4, liveRmsG: 0.02, liveRmsAllG: 0.05, displayLevel: 2, displayG: 0.02 });
+  const dashed = r.root.findAll((n) => n.type === 'Line' && n.props.strokeDasharray === '5 4');
+  const floorLine = dashed.find((n) => n.props.stroke !== C.danger);
+  check(P + 'floor 0: floor line on the bottom edge', floorLine && floorLine.props.y1 === 270, floorLine && floorLine.props.y1);
+  const svgTexts = r.root.findAll((n) => n.type === 'SvgText');
+  const svgText = (str) => svgTexts.filter((n) => [].concat(n.props.children).join('') === str);
+  check(P + "floor 0: right-hand label '0' (not .006)", svgText('0').some((n) => n.props.x === 307) && svgText('.006').length === 0);
+  const edge = svgText('0.5')[0];
+  check(P + 'band from 0.5 Hz: axis starts at 0 Hz, edge drawn at 0.5', edge && edge.props.x > 50 && edge.props.x < 60, edge && edge.props.x);
+  check(P + 'tester case reading is in zone (blue dot)', nowDot()[0].props.fill === C.info && row1Of().text === '4.0 Hz · .020 g · intensity 2');
+  show(ADV, IN_ZONE);
+  const edge4 = r.root.findAll((n) => n.type === 'SvgText' && [].concat(n.props.children).join('') === '4.0')[0];
+  check(P + 'band from 4 Hz: axis still starts at 1 Hz', edge4 && Math.abs(edge4.props.x - (46 + (3 / 14) * 256)) < 0.01, edge4 && edge4.props.x);
 
   // waiting for data
   show(ADV, { mapTrail: [], recentX: [] });
@@ -200,14 +225,15 @@ for (const os of ['ios', 'android']) {
   check(P + 'trail: hollow (out) then blue, older fainter', tr.length === 2 && tr[0].props.fill === 'none' && tr[1].props.fill === C.info && tr[0].props.strokeOpacity < tr[1].props.fillOpacity, tr.map((n) => n.props.fill).join(','));
 
   // fixed-height rows and scaling caps (iOS Dynamic Type / Android Font size)
-  const row1 = textNode('4.7 Hz · .041 g · intensity 34') || r.root.findAll((n) => n.type === 'Text' && styleOf(n).height === 24)[0];
-  check(P + 'row 1 fixed: one line, fixed height, capped scaling', row1 && row1.props.numberOfLines === 1 && styleOf(row1).height === 24 && row1.props.maxFontSizeMultiplier === 1.2 && row1.props.adjustsFontSizeToFit === true);
+  show(ADV, IN_ZONE);
+  const rv = r.root.findAll((n) => n.type === 'View' && n.props.accessibilityLabel === '4.7 Hz · .041 g · intensity 34')[0];
+  check(P + 'row 1 fixed: height, one-line fields, capped scaling', rv && styleOf(rv).height === 24 && row1Of().nodes.every((f) => f.props.numberOfLines === 1 && f.props.maxFontSizeMultiplier === 1.2 && f.props.adjustsFontSizeToFit === true));
 }
 globalThis.__os = 'ios';
 
 // ---- FORTY-SEVENTH follow-up (kept): g next to the intensity % ----
 show({ sessionView: 'simple' }, { pitchFreqHz: 6, actualFreqHz: 6, liveRmsG: 0.2, displayLevel: 60, displayG: 0.7, liveSev: 'Moderate' });
-check('"60% (.70g) intensity"', t.includes('Moderate | 60% (.70g) intensity'), t.slice(0, 300));
+check('"60% (.700g) intensity" (3 decimals, 63rd)', t.includes('Moderate | 60% (.700g) intensity'), t.slice(0, 300));
 show({ sessionView: 'simple' }, { pitchFreqHz: 6, actualFreqHz: 6, liveRmsG: 0.0153, displayLevel: 3, displayG: 0.0153 });
 check('small g: 3 decimals', t.includes('3% (.015g) intensity'), t.slice(0, 300));
 

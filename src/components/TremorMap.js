@@ -15,8 +15,13 @@ import { classifyReading } from '../utils/sessionReading';
 //                inside the band, is shaded red: still counts as 100.
 //   upper limit (optional) = dark dashed line; above it, grey: no sound.
 // One dot per reading, coloured by what it means (utils/sessionReading.js):
-//   blue = in zone, red = above your 100, grey = below threshold,
-//   hollow = out of zone (outside the band, or above the upper limit).
+//   blue = in zone, red = above your 100, hollow = out of zone (outside the
+//   band, below the noise floor, or above the upper limit). SIXTY-THIRD
+//   follow-up: below-threshold readings are hollow too (was grey filled),
+//   so the legend has three entries.
+// SIXTY-THIRD follow-up: the floor is drawn at its real setting — a floor
+// of 0 (which a log scale can't show) sits on the bottom of the chart — and
+// the frequency axis starts at 0 Hz when the band goes below 1 Hz.
 // Larger dot = now; smaller = the last MAP_TRAIL_SEC (older = fainter).
 // The chart spans more than the settings (about 1–15 Hz, and from below the
 // noise floor to above full scale) so readings outside the box still show.
@@ -24,36 +29,39 @@ import { classifyReading } from '../utils/sessionReading';
 export const MAP_W = 340;
 export const MAP_H = 300;
 const PAD = { l: 46, r: 38, t: 8, b: 30 };
-const X_MIN = 1;
+// Bottom of the g scale when the noise floor is 0.
+const ZERO_FLOOR_BOTTOM_G = 0.001;
 
 const fmtG = (g) => `${g.toFixed(g < 0.1 ? 3 : 2).replace(/^0(?=\.)/, '')}`;
 
-export function mapScales({ bandMaxHz = 14, noiseFloorG = 0.006, fullScaleG = 0.35, ceilingG = null }) {
+export function mapScales({ bandMinHz = 3, bandMaxHz = 14, bandOn = true, noiseFloorG = 0.006, fullScaleG = 0.35, ceilingG = null }) {
+  const xMin = bandOn && bandMinHz < 1 ? 0 : 1;
   const xMax = Math.max(15, Math.ceil(bandMaxHz + 1));
-  const floor = noiseFloorG > 0 ? noiseFloorG : 0.006;
-  const yMin = floor / 2.5; // room below the floor for "below threshold" readings
-  const yMax = Math.max(fullScaleG * 1.8, (ceilingG || 0) * 1.4, floor * 4);
+  const floor = noiseFloorG > 0 ? noiseFloorG : 0;
+  // Room below a real floor for "below threshold" readings; a floor of 0
+  // sits on the bottom edge.
+  const yMin = floor > 0 ? floor / 2.5 : ZERO_FLOOR_BOTTOM_G;
+  const yMax = Math.max(fullScaleG * 1.8, (ceilingG || 0) * 1.4, (floor || yMin) * 4);
   const lMin = Math.log10(yMin);
   const lMax = Math.log10(yMax);
-  const x = (hz) => PAD.l + ((Math.min(xMax, Math.max(X_MIN, hz)) - X_MIN) / (xMax - X_MIN)) * (MAP_W - PAD.l - PAD.r);
+  const x = (hz) => PAD.l + ((Math.min(xMax, Math.max(xMin, hz)) - xMin) / (xMax - xMin)) * (MAP_W - PAD.l - PAD.r);
   const y = (g) => {
     const l = Math.log10(Math.max(yMin, Math.min(yMax, g > 0 ? g : yMin)));
     return MAP_H - PAD.b - ((l - lMin) / (lMax - lMin)) * (MAP_H - PAD.t - PAD.b);
   };
-  return { x, y, xMax, yMin, yMax };
+  return { x, y, xMin, xMax, yMin, yMax, floorY: floor > 0 ? y(floor) : MAP_H - PAD.b };
 }
 
 // Dot colours per state; null fill = hollow.
 export function dotStyle(kind, c) {
   if (kind === 'zone') return { fill: c.info, stroke: null };
   if (kind === 'over') return { fill: c.danger, stroke: null };
-  if (kind === 'below') return { fill: c.tx3, stroke: null };
-  return { fill: null, stroke: c.tx1 }; // 'out', 'ceiling'
+  return { fill: null, stroke: c.tx1 }; // 'out', 'below', 'ceiling'
 }
 
 export default function TremorMap({ trail = [], current, window: win, c, nowMs = Date.now(), trailSec = 60 }) {
   const { bandOn, minHz, maxHz, noiseFloorG, fullScaleG, ceilingG } = win;
-  const s = mapScales({ bandMaxHz: maxHz, noiseFloorG, fullScaleG, ceilingG });
+  const s = mapScales({ bandMinHz: minHz, bandMaxHz: maxHz, bandOn, noiseFloorG, fullScaleG, ceilingG });
   const plotL = PAD.l;
   const plotR = MAP_W - PAD.r;
   const plotT = PAD.t;
@@ -61,7 +69,7 @@ export default function TremorMap({ trail = [], current, window: win, c, nowMs =
 
   const boxL = bandOn ? s.x(minHz) : plotL;
   const boxR = bandOn ? s.x(maxHz) : plotR;
-  const yFloor = s.y(noiseFloorG);
+  const yFloor = s.floorY;
   const yFull = s.y(fullScaleG);
   const yCeil = ceilingG ? s.y(ceilingG) : null;
   // Top of the blue box: full scale, or the upper limit if it's lower.
@@ -74,7 +82,7 @@ export default function TremorMap({ trail = [], current, window: win, c, nowMs =
   // on this log scale intensity 50 sits near the top and 10 mid-chart. Both
   // are labelled at their true heights (unless they'd crowd 0 or 100).
   const midTicks = [10, 50]
-    .map((lv) => ({ lv, y: s.y(noiseFloorG + (lv / 100) * (fullScaleG - noiseFloorG)) }))
+    .map((lv) => ({ lv, y: s.y(Math.max(0, noiseFloorG) + (lv / 100) * (fullScaleG - Math.max(0, noiseFloorG))) }))
     .filter((t) => Math.abs(t.y - yFull) > 14 && Math.abs(t.y - yFloor) > 14);
 
   const xTicks = [];
@@ -192,7 +200,7 @@ export default function TremorMap({ trail = [], current, window: win, c, nowMs =
           {fmtG(fullScaleG)}
         </SvgText>
         <SvgText x={plotR + 5} y={yFloor + 4} fontSize={11} fill={c.tx2} textAnchor="start">
-          {fmtG(noiseFloorG)}
+          {noiseFloorG > 0 ? fmtG(noiseFloorG) : '0'}
         </SvgText>
         {yCeil != null && (
           <SvgText x={plotR + 5} y={yCeil + 4} fontSize={11} fontWeight="bold" fill={c.tx1} textAnchor="start">
@@ -234,9 +242,10 @@ export default function TremorMap({ trail = [], current, window: win, c, nowMs =
 }
 
 // The legend under the map's text rows (fixed: never changes).
+// SIXTY-THIRD follow-up: three entries, one row (design v2).
 export function TremorMapLegend({ c }) {
   const item = (key, mark, text) => (
-    <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 20 }}>
+    <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
       {mark}
       <Text style={{ fontSize: 13, color: c.tx2 }} numberOfLines={1} maxFontSizeMultiplier={1.2}>
         {text}
@@ -248,16 +257,11 @@ export function TremorMapLegend({ c }) {
   return (
     <View
       accessible
-      accessibilityLabel="Legend: blue, in zone. Red, above your 100. Grey, below threshold. Hollow, out of zone."
-      style={{ height: 44, justifyContent: 'center', gap: 2 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 18 }}>
-        {item('z', filled(c.info), 'in zone')}
-        {item('o', filled(c.danger), 'above your 100')}
-      </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 18 }}>
-        {item('b', filled(c.tx3), 'below threshold')}
-        {item('x', hollow, 'out of zone')}
-      </View>
+      accessibilityLabel="Legend: blue, in zone. Red, above your 100. Hollow, out of zone."
+      style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 16, height: 26 }}>
+      {item('z', filled(c.info), 'in zone')}
+      {item('o', filled(c.danger), 'above your 100')}
+      {item('x', hollow, 'out of zone')}
     </View>
   );
 }

@@ -3621,6 +3621,78 @@ Changed: `src/screens/RecordingScreen.js`, `src/components/TremorMap.js`,
 `tests/render/testRec.mjs`, `tests/render/viewMap.mjs`, `tests/run-all.mjs`,
 `README.md`, `HANDOFF.md`.
 
+## Sixty-third follow-up — tester fixes (spill, volume, map) and design v2 rows
+
+From a tester's report with Calibration at full scale 1.00 g, noise floor 0,
+band 0.5–12 Hz ("hollow circles well inside the box"; "sound doesn't switch
+on until about intensity 10") and design v2 (`SteadyPoint_Advanced_View_2.pdf`).
+iOS and Android share all of it — no platform branches.
+
+**1. Edge spill only when there's no real peak inside the band**
+(`dsp.js` `tremorPeakInfo`). Slow hand wander (~0.1–0.4 Hz) leaks into a low
+band edge like 0.5 Hz (a 2 s window resolves ~0.5 Hz) and could out-power a
+real in-band tremor right at the edge, so the reading was treated as spill:
+muted, and drawn hollow at the all-motion frequency — inside the box. Now, if
+the band's strongest bin is a spilling edge, the strongest interior local
+peak wins, provided it has at least `SPILL_INTERIOR_PEAK_SHARE` (10%) of the
+edge's power. Simulated with the real code (2 s windows, random phases and
+wander 0.1–0.4 Hz): a 4 Hz 0.02 g tremor + 0.05 g wander sounded 69% of the
+time before, 100% now; 4 Hz 0.01 g: 36% → 100%. Tremors really outside a
+4–8 Hz band (3, 3.5, 9 Hz, up to 0.2 g) stay silent (0%) — unchanged. 20%
+dropped the weak case to 75%; 5–10% behaved the same, 10% kept for margin.
+
+**2. Volume curve** (new `src/utils/volumeCurve.js`, used by `audio.js` for
+every voice). Volume rose in a straight line with intensity (intensity 10 =
+10% of full), so under ~10 was inaudible on a phone speaker — the "built-in
+threshold". Now: `0.12 + 0.88 × level^0.6` of the voice's maxGain whenever
+intensity > 0 (minimum 12% in the zone), 0 at rest; intensity 1 ≈ 18%, 10 ≈
+34%, 34 ≈ 58%, 50 ≈ 70%, 100 = 100%. Resuming mid-fade uses the inverse.
+Brightness unchanged (linear).
+
+**3. Map** (`TremorMap.js`): the floor is drawn at its real setting — a floor
+of 0 (a log scale can't show 0) sits on the bottom edge, labelled `0` (was
+drawn at .006); the frequency axis starts at 0 Hz when band filtering is on
+and the band starts below 1 Hz (else 1 Hz as before). Below-threshold
+readings are **hollow** (was grey filled) — legend back to three entries:
+in zone, above your 100, out of zone (one row).
+
+**4. Edit Calibration note below 1 Hz** (`calibrationLimits.js`,
+`RELIABLE_BAND_MIN_HZ`): a minimum band under 1 Hz is still allowed, with
+"Below 1 Hz, slow hand movement can't be reliably told apart from tremor, so
+readings near this edge may be unreliable." (1–3 Hz keeps the typical-range
+note.) Shows in Settings › Calibration and the session's Edit Calibration.
+
+**5. Design v2 rows** (`sessionReading.js`, `RecordingScreen.js`):
+- Row 1 is three fixed-width fields — frequency (27%, right-aligned) · g
+  (25%, centred) · intensity (38%, left) — same colours as before; each one
+  line, shrink-to-fit, tabular digits; the View's accessibility label is the
+  whole line.
+- Intensity always shown: `intensity 34`, `intensity >100` (was "100 (max)"),
+  `intensity 0`, `intensity --` out of zone (and while waiting).
+- Missing values are `--`: `-- Hz` (no frequency, e.g. device still),
+  `-- g`; out of zone circle `--`, subline `--% (--g) intensity` (was the
+  "Outside your frequency range · no sound" text).
+- g always three decimals: `.480 g`, `(.480g)`, `1.240 g`.
+
+Visual check: `cd tests/render && node viewMap.mjs` (now includes the
+tester's settings).
+
+Tests: new `logic/test18.mjs` (22) — the tester's case sounds in 40/40
+deterministic windows at ~4 Hz while the old rule fails some; out-of-band
+tremors silent; volume curve values, monotonic, inverse; the below-1 Hz note.
+`logic/test17.mjs` (45) and `render/testRec.mjs` (107: three fields and
+their fixed widths, `--` formats, hollow below-threshold dot, three-entry
+legend, floor 0 on the bottom edge, axis from 0 Hz — each on iOS and
+Android). 702 passed.
+
+Changed: `src/utils/dsp.js`, `src/utils/volumeCurve.js` (new),
+`src/services/audio.js`, `src/components/TremorMap.js`,
+`src/utils/sessionReading.js`, `src/screens/RecordingScreen.js`,
+`src/utils/calibrationLimits.js`, `android/gradle.properties` (63),
+`tests/logic/test17.mjs`, `tests/logic/test18.mjs` (new),
+`tests/render/testRec.mjs`, `tests/render/viewMap.mjs`, `tests/run-all.mjs`,
+`README.md`, `HANDOFF.md`.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

@@ -22,7 +22,7 @@ check('defaults', JSON.stringify(R.readingWindow({})) === JSON.stringify({ bandO
 // (i) in zone — design page 1
 let d = R.describeReading(live({ pitchFreqHz: 4.7, actualFreqHz: 4.7, liveRmsG: 0.041, liveRmsAllG: 0.05 }), BAND);
 check('zone kind', d.kind === 'zone');
-check('zone row1 blue', d.row1.text === '4.7 Hz · .041 g · intensity 34' && d.row1.tone === 'info', d.row1.text);
+check('zone row1 blue, three fields', d.row1.text === '4.7 Hz · .041 g · intensity 34' && d.row1.hz === '4.7 Hz' && d.row1.g === '.041 g' && d.row1.intensity === 'intensity 34' && d.row1.tone === 'info', d.row1.text);
 check('zone row2', d.row2 === 'inside your tremor zone (4–8 Hz)', d.row2);
 check('zone circle + label', d.circle.text === '34' && d.circle.tone === 'level' && d.label.text === 'Mild' && d.subline === '34% (.041g) intensity');
 check('zone simple line', d.simple.text === 'Inside your tremor zone (4–8 Hz)' && d.simple.tone === 'info');
@@ -32,9 +32,9 @@ check('zone never shows 0 while easing up', R.describeReading(live({ pitchFreqHz
 // (ii) above 100 — design page 2
 d = R.describeReading(live({ pitchFreqHz: 5.6, actualFreqHz: 5.6, liveRmsG: 0.48, liveRmsAllG: 0.5, displayLevel: 100, displayG: 0.48, liveSev: 'High' }), BAND);
 check('over kind', d.kind === 'over');
-check('over row1 red', d.row1.text === '5.6 Hz · .48 g · intensity 100 (max)' && d.row1.tone === 'danger', d.row1.text);
+check('over row1 red, >100', d.row1.text === '5.6 Hz · .480 g · intensity >100' && d.row1.tone === 'danger', d.row1.text);
 check('over row2', d.row2 === 'above your level 100 — still counts as 100');
-check('over circle + label', d.circle.text === '100' && d.circle.tone === 'danger' && d.label.text === 'High' && d.label.tone === 'danger' && d.subline === '>100% (.48g) intensity', d.subline);
+check('over circle + label', d.circle.text === '100' && d.circle.tone === 'danger' && d.label.text === 'High' && d.label.tone === 'danger' && d.subline === '>100% (.480g) intensity', d.subline);
 check('exactly full scale counts as over', R.describeReading(live({ pitchFreqHz: 5, liveRmsG: 0.35 }), BAND).kind === 'over');
 
 // (iii) below threshold — design page 3 (intensity shown as 0)
@@ -44,14 +44,14 @@ check('below row1 black, intensity 0 shown', d.row1.text === '5.2 Hz · .004 g �
 check('below row2', d.row2 === 'below your tremor threshold — counts as 0');
 check('below circle grey 0, None', d.circle.text === '0' && d.circle.tone === 'grey' && d.label.text === 'None' && d.subline === '0% (.004g) intensity');
 d = R.describeReading(live({ pitchFreqHz: null, actualFreqHz: null, liveRmsG: 0.002, liveRmsAllG: 0.003, displayLevel: 0 }), BAND);
-check('still device: no Hz, still below', d.kind === 'below' && d.row1.text === '.002 g · intensity 0', d.row1.text);
+check('still device: -- Hz, still below', d.kind === 'below' && d.row1.text === '-- Hz · .002 g · intensity 0' && d.row1.hz === '-- Hz', d.row1.text);
 
 // (iv) out of zone — design page 4 (distance shown)
 d = R.describeReading(live({ pitchFreqHz: null, actualFreqHz: 2.4, liveRmsG: 0.003, liveRmsAllG: 0.03, displayLevel: 0 }), BAND);
 check('out kind', d.kind === 'out');
-check('out row1: no intensity', d.row1.text === '2.4 Hz · .030 g' && d.row1.tone === 'tx1', d.row1.text);
+check('out row1: intensity --', d.row1.text === '2.4 Hz · .030 g · intensity --' && d.row1.intensity === 'intensity --' && d.row1.tone === 'tx1', d.row1.text);
 check('out row2: distance below', d.row2 === '1.6 Hz below your tremor zone — no sound', d.row2);
-check('out circle + label', d.circle.text === '—' && d.circle.tone === 'inverse' && d.label.text === 'Out of zone' && d.subline === 'Outside your frequency range · no sound');
+check('out circle + label: -- format', d.circle.text === '--' && d.circle.tone === 'inverse' && d.label.text === 'Out of zone' && d.subline === '--% (--g) intensity', d.subline);
 check('out simple line', d.simple.text === '2.4 Hz · below your tremor zone', d.simple.text);
 d = R.describeReading(live({ pitchFreqHz: null, actualFreqHz: 9.5, liveRmsG: 0.002, liveRmsAllG: 0.05 }), BAND);
 check('out above band', d.row2 === '1.5 Hz above your tremor zone — no sound' && d.simple.text === '9.5 Hz · above your tremor zone', d.row2);
@@ -77,7 +77,7 @@ check('band off: never out of zone', R.describeReading(live({ pitchFreqHz: null,
 
 // waiting
 d = R.describeReading({ mapTrail: [] }, BAND);
-check('waiting', d.kind === 'waiting' && d.row1.text === '—' && d.simple === null && d.circle.tone === 'empty' && d.subline === 'Waiting for device data…');
+check('waiting', d.kind === 'waiting' && d.row1.text === '-- Hz · -- g · intensity --' && d.circle.text === '--' && d.simple === null && d.circle.tone === 'empty' && d.subline === 'Waiting for device data…', d.row1.text);
 
 // map dots (classifyReading) agree with the text
 const k = (p, w = BAND) => R.classifyReading(p, w);
@@ -89,7 +89,9 @@ check('dot out at actual point', JSON.stringify(k({ pf: null, pg: 0.003, af: 2.4
 check('dot ceiling', k({ pf: 6, pg: 0.25 }, CEIL).kind === 'ceiling');
 
 // g formats
-check('g formats', R.fmtGSpaced(0.041) === '.041 g' && R.fmtGSpaced(0.48) === '.48 g' && R.fmtGSpaced(1.24) === '1.24 g' && R.fmtGTight(0.004) === '.004g' && R.fmtGSpaced(undefined) === '.000 g');
+check('g formats: always 3 decimals', R.fmtGSpaced(0.041) === '.041 g' && R.fmtGSpaced(0.48) === '.480 g' && R.fmtGSpaced(1.24) === '1.240 g' && R.fmtGTight(0.004) === '.004g' && R.fmtGSpaced(undefined) === '.000 g');
+check('ceiling: intensity number', R.describeReading(live({ pitchFreqHz: 6, liveRmsG: 0.25, displayLevel: 70 }), CEIL).row1.text === '6.0 Hz · .250 g · intensity 70');
+check('noise floor 0: everything above it counts', R.describeReading(live({ pitchFreqHz: 4.5, liveRmsG: 0.002 }), { ...BAND, noiseFloorG: 0 }).kind === 'zone');
 
 console.log(`${ok} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -289,14 +289,27 @@ export default function RecordingScreen() {
               <Text style={{ color: c.tx2, fontSize: 13 }}>trail: last 60 s</Text>
             </View>
             <TremorMap trail={live.mapTrail || []} current={hasMapData ? mapNow : null} window={win} c={c} />
-            <Text
-              style={[styles.row1, { color: toneColor(reading.row1.tone, c) }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-              maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
-              {reading.row1.text}
-            </Text>
+            {/* SIXTY-THIRD follow-up: frequency · g · intensity as three
+                fixed-width fields, so nothing shifts as values change. */}
+            <View style={styles.row1} accessible accessibilityLabel={reading.row1.text}>
+              {[
+                ['hz', reading.row1.hz, styles.fieldHz],
+                ['s1', '·', styles.fieldSep],
+                ['g', reading.row1.g, styles.fieldG],
+                ['s2', '·', styles.fieldSep],
+                ['lv', reading.row1.intensity, styles.fieldLevel],
+              ].map(([key, text, fieldStyle]) => (
+                <Text
+                  key={key}
+                  style={[styles.row1Field, fieldStyle, { color: toneColor(reading.row1.tone, c) }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  maxFontSizeMultiplier={FIXED_TEXT_SCALE}>
+                  {text}
+                </Text>
+              ))}
+            </View>
             <Text
               style={[styles.row2, { color: c.tx1 }]}
               numberOfLines={1}
@@ -490,7 +503,12 @@ const styles = StyleSheet.create({
   summaryCard: { flexDirection: 'row', alignItems: 'center', gap: 14, height: 80 },
   smallCircle: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  row1: { fontSize: 16, fontWeight: '700', textAlign: 'center', height: 24, lineHeight: 24, marginTop: 4 },
+  row1: { flexDirection: 'row', alignItems: 'center', height: 24, marginTop: 4 },
+  row1Field: { fontSize: 16, fontWeight: '700', lineHeight: 24, fontVariant: ['tabular-nums'] },
+  fieldHz: { width: '27%', textAlign: 'right' },
+  fieldSep: { width: '5%', textAlign: 'center' },
+  fieldG: { width: '25%', textAlign: 'center' },
+  fieldLevel: { width: '38%', textAlign: 'left' },
   row2: { fontSize: 14.5, textAlign: 'center', height: 21, lineHeight: 21 },
   legendRow: { flexDirection: 'row', alignItems: 'center' },
   legendDotWrap: { flexDirection: 'row', alignItems: 'center', marginLeft: 12 },

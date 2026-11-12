@@ -1,5 +1,6 @@
 // Renders the real TremorMap component to map.html for a visual check
 // (not part of npm test). SIXTY-SECOND follow-up: the design's four states,
+// SIXTY-THIRD: the tester's settings (floor 0, band from 0.5 Hz),
 // the upper limit, band filtering off, and dark mode.
 import { build } from 'esbuild'; import plugin from './plugin.mjs'; import fs from 'fs';
 await build({ entryPoints: ['entryMap.js'], bundle: true, format: 'esm', platform: 'node', outfile: 'outMap.mjs', plugins: [plugin], loader: { '.js': 'jsx' }, jsx: 'transform', logLevel: 'error', external: ['react', 'react-test-renderer'] });
@@ -18,6 +19,7 @@ const cases = [
   ['(iv) out of zone', BAND, light, tr([{ pf: null, pg: 0.003, af: 3.1, ag: 0.015 }, { pf: null, pg: 0.003, af: 2.8, ag: 0.02 }, { pf: null, pg: 0.003, af: 2.6, ag: 0.025 }]), { pf: null, pg: 0.003, af: 2.4, ag: 0.03 }],
   ['upper limit .20 g', { ...BAND, ceilingG: 0.2 }, light, tr([{ pf: 6, pg: 0.1 }, { pf: 6.1, pg: 0.15 }]), { pf: 6.2, pg: 0.25, af: 6.2, ag: 0.26 }],
   ['band off', { ...BAND, bandOn: false, minHz: 3, maxHz: 14 }, light, tr([{ pf: 2, pg: 0.04 }]), { pf: 2.1, pg: 0.05, af: 2.1, ag: 0.05 }],
+  ["tester: floor 0, 0.5–12 Hz, FS 1.0", { bandOn: true, minHz: 0.5, maxHz: 12, noiseFloorG: 0, fullScaleG: 1, ceilingG: null }, light, tr([{ pf: 4.2, pg: 0.004 }, { pf: 4.1, pg: 0.01 }, { pf: 4, pg: 0.015 }]), { pf: 4, pg: 0.02, af: 4, ag: 0.05 }],
   ['dark, in zone', BAND, dark, tr([{ pf: 5.5, pg: 0.02 }, { pf: null, pg: 0.003, af: 3, ag: 0.02 }]), { pf: 4.7, pg: 0.041, af: 4.7, ag: 0.05 }],
 ];
 const toSvg = (n) => { if (typeof n === 'string' || typeof n === 'number') return String(n); const map = { Svg: 'svg', Rect: 'rect', Line: 'line', Circle: 'circle', SvgText: 'text' };
