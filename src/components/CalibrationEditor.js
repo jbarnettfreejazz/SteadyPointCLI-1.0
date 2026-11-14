@@ -14,6 +14,7 @@ import {
   defaultCeilingEntry,
   stepCeiling,
   validateCeiling,
+  guardrailsDisabled,
 } from '../utils/calibrationLimits';
 
 // THIRTY-SIXTH follow-up: the calibration edit form, shared by Settings >
@@ -60,7 +61,11 @@ export default function CalibrationEditor({ settings, onSave, onCancel, onDirtyC
     savedCeiling != null ? savedCeiling.toFixed(CEILING_FIELD.decimals) : defaultCeilingEntry(settings),
   );
 
-  const fieldCheck = validateCalibration(entries);
+  // SIXTY-FOURTH follow-up: Disable Guardrails (Settings › Calibration)
+  // raises the noise floor's maximum; it's a saved setting, so the
+  // in-session editor follows it too.
+  const limitOpts = { guardrailsDisabled: guardrailsDisabled(settings) };
+  const fieldCheck = validateCalibration(entries, limitOpts);
   const ceiling = validateCeiling(ceilingText, ceilingOn, fieldCheck.values.noiseFloorG);
   const check = { ...fieldCheck, valid: fieldCheck.valid && !ceiling.error };
   const changes = check.valid
@@ -111,7 +116,7 @@ export default function CalibrationEditor({ settings, onSave, onCancel, onDirtyC
           <Text style={{ fontSize: 12, color: c.tx3, lineHeight: 17, marginTop: 2 }}>{f.help}</Text>
           <View style={styles.editRow}>
             <Pressable
-              onPress={() => setEntry(f.key, stepEntry(f.key, entries[f.key], -1))}
+              onPress={() => setEntry(f.key, stepEntry(f.key, entries[f.key], -1, limitOpts))}
               style={[styles.stepButton, { borderColor: c.bd3, backgroundColor: c.bg1 }]}
               accessibilityRole="button"
               accessibilityLabel={`Decrease ${f.label}`}>
@@ -129,7 +134,7 @@ export default function CalibrationEditor({ settings, onSave, onCancel, onDirtyC
             />
             <Text style={{ fontSize: 14, color: c.tx2, width: 26 }}>{f.unit}</Text>
             <Pressable
-              onPress={() => setEntry(f.key, stepEntry(f.key, entries[f.key], 1))}
+              onPress={() => setEntry(f.key, stepEntry(f.key, entries[f.key], 1, limitOpts))}
               style={[styles.stepButton, { borderColor: c.bd3, backgroundColor: c.bg1 }]}
               accessibilityRole="button"
               accessibilityLabel={`Increase ${f.label}`}>
@@ -141,7 +146,7 @@ export default function CalibrationEditor({ settings, onSave, onCancel, onDirtyC
           ) : check.warnings[f.key] ? (
             <Text style={{ fontSize: 12, color: c.warning, marginTop: 6 }}>{check.warnings[f.key]}</Text>
           ) : (
-            <Text style={{ fontSize: 12, color: c.tx3, marginTop: 6 }}>Allowed: {rangeHint(f.key)}</Text>
+            <Text style={{ fontSize: 12, color: c.tx3, marginTop: 6 }}>Allowed: {rangeHint(f.key, limitOpts)}</Text>
           )}
         </View>
       ))}

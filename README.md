@@ -3693,6 +3693,73 @@ Changed: `src/utils/dsp.js`, `src/utils/volumeCurve.js` (new),
 `tests/render/testRec.mjs`, `tests/render/viewMap.mjs`, `tests/run-all.mjs`,
 `README.md`, `HANDOFF.md`.
 
+## Sixty-fourth follow-up — noise floor up to 0.100 g; Disable Guardrails
+
+iOS and Android share all of it — no platform branches.
+
+**Noise floor maximum 0.100 g** (was 0.050 g). The "under 10% of full
+scale" rule is unchanged, so 0.100 g needs a full scale above 1.00 g.
+
+**Settings › Calibration › Disable Guardrails** — new ADVANCED card at the
+bottom of the page (hidden while editing values, like the wizard card), off
+by default (`settings.calibrationGuardrailsDisabled`; missing = off).
+- On: noise floor up to and including 10% of full scale — at most 0.400 g
+  (full scale tops out at 4.00 g); field hint "Allowed: 0.000 – 0.400 g",
+  − / + step to 0.400. Error: "Must be at most 10% of full scale (… g or
+  less)". Every other limit is unchanged.
+- Off (default): today's rules with the 0.100 g maximum.
+- Saved as soon as it's switched. The in-session Edit Calibration follows it
+  (it's a saved setting; the switch itself is only on the Calibration page).
+- Turning it off (guardrails back on): if the floor is above 0.100 g, asks
+  ("Turn guardrails back on? Your noise floor will be lowered from 0.250 g to
+  0.100 g…") and saves min(floor, 0.100 g) with `calibrationSource: 'manual'`
+  and `calibrationSetAt`; Cancel leaves both unchanged. Floor already ≤ 0.100 g:
+  just switches, no question. (64th only: an exactly-10% floor was nudged
+  just under 10% — removed in the 65th, see below.)
+- Info button (ⓘ drawn as a circled "i", 22 pt with a 12 pt hit slop,
+  "About Disable Guardrails") opens an explanation: the two limits, that a
+  high floor can hide a mild tremor, and the reset when turned back on.
+  A one-line caption under the switch shows the current limit.
+
+`calibrationLimits.js`: `NOISE_FLOOR_MAX_G` (0.1), `NOISE_FLOOR_MAX_UNGUARDED_G`
+(0.4), `guardrailsDisabled(settings)`, `noiseFloorWithGuardrails(settings)`;
+`validateCalibration`, `rangeHint` and `stepEntry` take
+`{ guardrailsDisabled }`.
+
+Tests: `render/testCal.mjs` +36 — limits in both modes, strict vs inclusive
+10%, hints and steps, the reset (incl. the exactly-10% case, and that the
+result always validates), and the screen as iOS and as Android (switch
+position and default, info text, save on switch, hidden while editing,
+editor limits per mode, re-enable question / save / cancel / no-question).
+738 passed.
+
+Changed: `src/utils/calibrationLimits.js`, `src/components/CalibrationEditor.js`,
+`src/screens/CalibrationSettingsScreen.js`, `src/state/initialState.js`,
+`android/gradle.properties` (64), `tests/render/testCal.mjs`, `README.md`,
+`HANDOFF.md`.
+
+## Sixty-fifth follow-up — noise floor "at most 10%" of full scale
+
+The noise floor can now be **up to and including** 10% of full scale in both
+modes (with guardrails on it was strictly under 10%, so a 0.100 g floor at a
+1.00 g full scale was refused — 0.099 g was the most). One rule, one error
+message: "Must be at most 10% of full scale (0.100 g or less)". With
+guardrails on, 0.100 g is still the cap (full scale 1.00 g and up); with them
+disabled, 0.400 g. The Calibration caption reads "Off: noise floor up to
+0.100 g and at most 10% of full scale."
+
+Turning guardrails back on now saves exactly min(floor, 0.100 g): every floor
+already satisfies "at most 10%", so the 64th's exactly-10% adjustment (e.g.
+0.050 → 0.049 at full scale 0.50) is removed.
+
+Tests: `render/testCal.mjs` (113) — 0.035 now allowed at 0.35 g, 0.036 refused;
+0.100 at 1.00 g allowed, at 0.99 g refused; reset is exactly min(); the editor
+accepts 0.100 at 1.00 g with guardrails on (iOS and Android). 741 passed.
+
+Changed: `src/utils/calibrationLimits.js`, `src/screens/CalibrationSettingsScreen.js`,
+`android/gradle.properties` (65), `tests/render/testCal.mjs`, `README.md`,
+`HANDOFF.md`.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

@@ -1,4 +1,4 @@
-# SteadyPoint — handoff note (Nov 11, 2026)
+# SteadyPoint — handoff note (Nov 13, 2026)
 
 React Native 0.81.6 app (old architecture; upgraded from 0.75.4 in the
 Fifty-fourth follow-up — do not go past 0.81.x, see README) (repo root), on iOS and — since the Fifty-second
@@ -54,6 +54,13 @@ trail; three fixed rows under it explain the current reading.
 - 57th: Edit Calibration during a session as a screen (Android + iOS).
 
 ## Waiting on device testing
+
+000. **Noise floor 0.100 g + Disable Guardrails (64th, 65th)** — iOS and
+   Android: floor up to 0.100 g and at most 10% of full scale (0.100 g at
+   1.00 g is allowed since the 65th); switch at the bottom
+   of Settings › Calibration, off by default; info button; on → floor up to
+   10% of full scale (0.400 g at 4.00 g), also in the session's Edit
+   Calibration; off with a floor above 0.100 g → asks, then lowers it.
 
 00. **Tester fixes + design v2 rows (63rd)** — iOS and Android. With the
    tester's settings (full scale 1.00, floor 0, band 0.5–12): dots inside the

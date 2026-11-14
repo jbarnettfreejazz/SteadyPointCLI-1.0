@@ -16,8 +16,23 @@ export const RELIABLE_BAND_MIN_HZ = 1;
 // Smallest gap between the band's minimum and maximum.
 export const MIN_BAND_WIDTH_HZ = 1;
 
-// Noise floor must stay under this share of full scale.
+// Noise floor can be at most this share of full scale (SIXTY-FIFTH
+// follow-up: was strictly under it).
 export const MAX_NOISE_FLOOR_SHARE = 0.1;
+
+// SIXTY-FOURTH follow-up: noise floor maximum. With guardrails on (the
+// default) it can go up to 0.100 g (was 0.050 g), and at most 10% of full
+// scale (SIXTY-FIFTH follow-up: was under 10%). Settings › Calibration ›
+// Disable Guardrails (advanced) allows up to
+// 10% of full scale itself — at most 0.400 g, since full scale tops out at
+// 4.00 g. Turning guardrails back on lowers a floor above 0.100 g to 0.100 g
+// (see noiseFloorWithGuardrails()).
+export const NOISE_FLOOR_MAX_G = 0.1;
+export const NOISE_FLOOR_MAX_UNGUARDED_G = 0.4;
+
+export function guardrailsDisabled(settings) {
+  return settings?.calibrationGuardrailsDisabled === true;
+}
 
 export const CALIBRATION_FIELDS = [
   {
@@ -36,7 +51,7 @@ export const CALIBRATION_FIELDS = [
     help: 'Motion at or below this reads as intensity 0.',
     unit: 'g',
     min: 0,
-    max: 0.05,
+    max: NOISE_FLOOR_MAX_G, // NOISE_FLOOR_MAX_UNGUARDED_G with guardrails disabled
     step: 0.001,
     decimals: 3,
   },
@@ -114,6 +129,16 @@ export function validateCeiling(text, enabled, noiseFloorG) {
   return { value: v, error: null };
 }
 
+// SIXTY-FOURTH follow-up: the noise floor to save when guardrails are turned
+// back on — min(current, 0.100 g). (SIXTY-FIFTH: with "at most 10%" in both
+// modes the result is always allowed, so the 64th's exactly-10% adjustment is
+// gone.) Returns null when the current floor is already allowed.
+export function noiseFloorWithGuardrails(settings) {
+  const nf = typeof settings?.noiseFloorG === 'number' ? settings.noiseFloorG : DEFAULT_NOISE_FLOOR_G;
+  const next = Math.round(Math.min(nf, NOISE_FLOOR_MAX_G) * 1000) / 1000;
+  return Math.abs(next - nf) < 1e-9 ? null : next;
+}
+
 export const CALIBRATION_DEFAULTS = {
   fullScaleG: DEFAULT_FULL_SCALE_G,
   noiseFloorG: DEFAULT_NOISE_FLOOR_G,
@@ -122,7 +147,12 @@ export const CALIBRATION_DEFAULTS = {
   bandFilterEnabled: false,
 };
 
-const fieldFor = (key) => CALIBRATION_FIELDS.find((f) => f.key === key);
+// opts.guardrailsDisabled raises the noise floor's maximum.
+const fieldFor = (key, opts) => {
+  const f = CALIBRATION_FIELDS.find((x) => x.key === key);
+  if (f && key === 'noiseFloorG' && opts?.guardrailsDisabled) return { ...f, max: NOISE_FLOOR_MAX_UNGUARDED_G };
+  return f;
+};
 
 export function formatValue(key, value) {
   const f = fieldFor(key);
@@ -130,8 +160,8 @@ export function formatValue(key, value) {
 }
 
 // "0.10 – 4.00 g"
-export function rangeHint(key) {
-  const f = fieldFor(key);
+export function rangeHint(key, opts) {
+  const f = fieldFor(key, opts);
   return `${f.min.toFixed(f.decimals)} – ${f.max.toFixed(f.decimals)} ${f.unit}`;
 }
 
@@ -153,8 +183,8 @@ export function roundToField(key, value) {
 
 // − / + buttons: one step from the typed value (or from the nearest limit
 // if the entry is empty/invalid), kept within the field's range.
-export function stepEntry(key, text, direction) {
-  const f = fieldFor(key);
+export function stepEntry(key, text, direction, opts) {
+  const f = fieldFor(key, opts);
   const current = parseEntry(text);
   const base = current == null ? (direction > 0 ? f.min - f.step : f.max + f.step) : current;
   const next = Math.min(f.max, Math.max(f.min, roundToField(key, base + direction * f.step)));
@@ -163,14 +193,16 @@ export function stepEntry(key, text, direction) {
 
 // Checks every entry and the rules between them.
 // entries: { fullScaleG, noiseFloorG, tremorBandMinHz, tremorBandMaxHz } as typed text.
+// opts: { guardrailsDisabled } (SIXTY-FOURTH follow-up).
 // Returns { valid, values (rounded numbers, or null where invalid), errors, warnings }
 // where errors / warnings map a field key to a short message.
-export function validateCalibration(entries) {
+export function validateCalibration(entries, opts) {
   const errors = {};
   const warnings = {};
   const values = {};
 
-  for (const f of CALIBRATION_FIELDS) {
+  for (const f0 of CALIBRATION_FIELDS) {
+    const f = fieldFor(f0.key, opts);
     const n = parseEntry(entries[f.key]);
     if (n == null) {
       errors[f.key] = String(entries[f.key] ?? '').trim() === '' ? 'Enter a value' : 'Enter a number';
@@ -179,18 +211,21 @@ export function validateCalibration(entries) {
     }
     const v = roundToField(f.key, n);
     if (v < f.min || v > f.max) {
-      errors[f.key] = `Must be between ${rangeHint(f.key)}`;
+      errors[f.key] = `Must be between ${rangeHint(f.key, opts)}`;
       values[f.key] = null;
       continue;
     }
     values[f.key] = v;
   }
 
-  // Noise floor under 10% of full scale (which also keeps full scale above it).
+  // Noise floor at most 10% of full scale (which also keeps full scale well
+  // above it) — the same rule with or without guardrails. SIXTY-FIFTH
+  // follow-up: was strictly under 10% with guardrails on, so a 0.100 g floor
+  // at a 1.00 g full scale was refused.
   if (values.fullScaleG != null && values.noiseFloorG != null) {
-    const limit = values.fullScaleG * MAX_NOISE_FLOOR_SHARE;
-    if (values.noiseFloorG >= limit) {
-      errors.noiseFloorG = `Must be under 10% of full scale (under ${limit.toFixed(3)} g)`;
+    const limit = Math.round(values.fullScaleG * MAX_NOISE_FLOOR_SHARE * 1000) / 1000;
+    if (values.noiseFloorG > limit + 1e-9) {
+      errors.noiseFloorG = `Must be at most 10% of full scale (${limit.toFixed(3)} g or less)`;
     }
   }
 

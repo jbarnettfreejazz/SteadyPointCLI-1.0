@@ -1,12 +1,21 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme, radii } from '../utils/theme';
 import { useStore } from '../state/StoreContext';
 import { shareCalibrationLog } from '../services/calibrationLogger';
 import { dateFromIso } from '../utils/analyticsStats';
-import { CALIBRATION_FIELDS, CALIBRATION_DEFAULTS, formatValue, formatCeiling } from '../utils/calibrationLimits';
+import {
+  CALIBRATION_FIELDS,
+  CALIBRATION_DEFAULTS,
+  formatValue,
+  formatCeiling,
+  guardrailsDisabled,
+  noiseFloorWithGuardrails,
+  NOISE_FLOOR_MAX_G,
+  NOISE_FLOOR_MAX_UNGUARDED_G,
+} from '../utils/calibrationLimits';
 import CalibrationEditor from '../components/CalibrationEditor';
 import { go } from '../navigation/go';
 
@@ -20,6 +29,15 @@ import { go } from '../navigation/go';
 // Manual edits record calibrationSource 'manual' + calibrationSetAt; they do
 // NOT set lastCalibratedAt, which only the calibration wizard sets (it drives
 // Home's 90-day recalibration reminder).
+
+// SIXTY-FOURTH follow-up: what the info button next to Disable Guardrails says.
+export const GUARDRAILS_INFO =
+  `For advanced users. With guardrails on, the noise floor can be set up to ${NOISE_FLOOR_MAX_G.toFixed(3)} g. ` +
+  `Turning this on lets you raise it to 10% of your full scale range (up to ${NOISE_FLOOR_MAX_UNGUARDED_G.toFixed(3)} g ` +
+  'with a full scale of 4.00 g).\n\n' +
+  'Motion at or below the noise floor reads as intensity 0, so a high noise floor can hide a mild tremor ' +
+  'entirely: readings and sound stay at 0 until motion rises above it.\n\n' +
+  `Turning guardrails back on lowers a noise floor above ${NOISE_FLOOR_MAX_G.toFixed(3)} g to ${NOISE_FLOOR_MAX_G.toFixed(3)} g.`;
 
 function lastSetNote(settings) {
   const source = settings.calibrationSource || (settings.lastCalibratedAt ? 'wizard' : null);
@@ -79,6 +97,41 @@ export default function CalibrationSettingsScreen() {
     });
     stopEditing();
   };
+
+  // SIXTY-FOURTH follow-up: Disable Guardrails. Saved right away (it's a
+  // setting, not a calibration value). Turning it off (guardrails back on)
+  // lowers the noise floor to min(floor, 0.100 g) if needed, after asking.
+  const unguarded = guardrailsDisabled(settings);
+  const setGuardrailsDisabled = (on) => {
+    if (on) {
+      actions.updateSettings({ calibrationGuardrailsDisabled: true });
+      return;
+    }
+    const next = noiseFloorWithGuardrails(settings);
+    if (next == null) {
+      actions.updateSettings({ calibrationGuardrailsDisabled: false });
+      return;
+    }
+    Alert.alert(
+      'Turn guardrails back on?',
+      `Your noise floor will be lowered from ${formatValue('noiseFloorG', settings.noiseFloorG)} g to ` +
+        `${formatValue('noiseFloorG', next)} g, the most allowed with guardrails on. Past sessions will be shown on the new noise floor.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Turn On Guardrails',
+          onPress: () =>
+            actions.updateSettings({
+              calibrationGuardrailsDisabled: false,
+              noiseFloorG: next,
+              calibrationSource: 'manual',
+              calibrationSetAt: new Date().toISOString(),
+            }),
+        },
+      ],
+    );
+  };
+  const showGuardrailsInfo = () => Alert.alert('Disable Guardrails', GUARDRAILS_INFO, [{ text: 'OK' }]);
 
   const handleShareLog = async () => {
     try {
@@ -190,6 +243,35 @@ export default function CalibrationSettingsScreen() {
                 <Text style={{ color: c.tx2, fontWeight: '600' }}>Share Calibration Log</Text>
               </Pressable>
             </View>
+
+            {/* SIXTY-FOURTH follow-up: Disable Guardrails (advanced). Hidden
+                while editing values, like the wizard card above. */}
+            <Text style={[styles.sectionLabel, { color: c.tx3 }]}>ADVANCED</Text>
+            <View style={[styles.card, { backgroundColor: c.bg2, borderColor: c.bd3 }]}>
+              <View style={styles.fieldHeader}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: c.tx1 }}>Disable Guardrails</Text>
+                <Pressable
+                  onPress={showGuardrailsInfo}
+                  hitSlop={12}
+                  accessibilityRole="button"
+                  accessibilityLabel="About Disable Guardrails"
+                  style={[styles.infoButton, { borderColor: c.info }]}>
+                  <Text style={{ color: c.info, fontSize: 13, fontWeight: '700', lineHeight: 16 }}>i</Text>
+                </Pressable>
+                <View style={{ flex: 1 }} />
+                <Switch
+                  value={unguarded}
+                  onValueChange={setGuardrailsDisabled}
+                  trackColor={{ true: c.warning }}
+                  accessibilityLabel="Disable Guardrails"
+                />
+              </View>
+              <Text style={{ fontSize: 12, color: unguarded ? c.warning : c.tx3, lineHeight: 17, marginTop: 4 }}>
+                {unguarded
+                  ? `On: noise floor can be up to 10% of full scale (at most ${NOISE_FLOOR_MAX_UNGUARDED_G.toFixed(3)} g).`
+                  : `Off: noise floor up to ${NOISE_FLOOR_MAX_G.toFixed(3)} g and at most 10% of full scale.`}
+              </Text>
+            </View>
           </>
         )}
       </ScrollView>
@@ -208,4 +290,5 @@ const styles = StyleSheet.create({
   fieldHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   button: { flex: 1, borderWidth: 1.5, borderRadius: radii.lg, paddingVertical: 12, alignItems: 'center' },
   fullButton: { flex: 0, marginTop: 14 },
+  infoButton: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
 });

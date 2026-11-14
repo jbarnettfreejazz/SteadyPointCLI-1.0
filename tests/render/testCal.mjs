@@ -14,7 +14,7 @@ check('empty -> Enter a value', L.validateCalibration({ ...good, fullScaleG: '' 
 check('junk -> Enter a number', L.validateCalibration({ ...good, fullScaleG: 'x' }).errors.fullScaleG === 'Enter a number');
 check('full scale range', L.validateCalibration({ ...good, fullScaleG: '4.01' }).errors.fullScaleG === 'Must be between 0.10 – 4.00 g' && L.validateCalibration({ ...good, fullScaleG: '0.09' }).errors.fullScaleG && L.validateCalibration({ ...good, fullScaleG: '4' }).valid && L.validateCalibration({ ...good, fullScaleG: '0.1' }).valid);
 check('noise range', L.validateCalibration({ ...good, noiseFloorG: '0.051' }).errors.noiseFloorG && L.validateCalibration({ ...good, noiseFloorG: '0', fullScaleG: '1' }).valid);
-check('noise under 10% of full scale', L.validateCalibration({ ...good, noiseFloorG: '0.035' }).errors.noiseFloorG === 'Must be under 10% of full scale (under 0.035 g)' && L.validateCalibration({ ...good, noiseFloorG: '0.034' }).valid, L.validateCalibration({ ...good, noiseFloorG: '0.035' }).errors.noiseFloorG);
+check('noise at most 10% of full scale (65th: was under)', L.validateCalibration({ ...good, noiseFloorG: '0.036' }).errors.noiseFloorG === 'Must be at most 10% of full scale (0.035 g or less)' && L.validateCalibration({ ...good, noiseFloorG: '0.035' }).valid, L.validateCalibration({ ...good, noiseFloorG: '0.036' }).errors.noiseFloorG);
 check('band ranges', L.validateCalibration({ ...good, tremorBandMinHz: '0.4' }).errors.tremorBandMinHz && L.validateCalibration({ ...good, tremorBandMaxHz: '20.1' }).errors.tremorBandMaxHz && L.validateCalibration({ ...good, tremorBandMaxHz: '1.4', tremorBandMinHz: '0.5' }).errors.tremorBandMaxHz);
 check('band gap', L.validateCalibration({ ...good, tremorBandMinHz: '7.1' }).errors.tremorBandMinHz === 'Must be at least 1 Hz below the maximum' && L.validateCalibration({ ...good, tremorBandMinHz: '7.0' }).valid);
 check('band edges', L.validateCalibration({ ...good, tremorBandMinHz: '18', tremorBandMaxHz: '20' }).valid && L.validateCalibration({ ...good, tremorBandMinHz: '0.5', tremorBandMaxHz: '1.5' }).valid);
@@ -161,4 +161,60 @@ act(() => sws()[1].props.onValueChange(false)); globalThis.__alerts = []; press(
 check('turning it off saves null', updates[0].intensityCeilingG === null, JSON.stringify(updates[0]));
 mk({ intensityCeilingG: 0.5 }); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); }); press(r.root, 'Edit values');
 press(r.root, 'Restore defaults'); check('restore defaults turns the limit off', sws()[1].props.value === false);
+
+// ---------- SIXTY-FOURTH follow-up: noise floor up to 0.100 g; Disable Guardrails ----------
+const G = { guardrailsDisabled: true };
+const fs4 = { ...good, fullScaleG: '4.00' };
+check('guarded: floor max 0.100', L.validateCalibration({ ...fs4, noiseFloorG: '0.100' }).valid && L.validateCalibration({ ...fs4, noiseFloorG: '0.101' }).errors.noiseFloorG === 'Must be between 0.000 – 0.100 g', L.validateCalibration({ ...fs4, noiseFloorG: '0.101' }).errors.noiseFloorG);
+check('guarded: 0.060 now allowed (was over 0.050)', L.validateCalibration({ ...good, fullScaleG: '1.00', noiseFloorG: '0.060' }).valid);
+check('guarded: 0.100 at full scale 1.00 allowed (65th)', L.validateCalibration({ ...good, fullScaleG: '1.00', noiseFloorG: '0.100' }).valid && L.validateCalibration({ ...good, fullScaleG: '0.99', noiseFloorG: '0.100' }).errors.noiseFloorG === 'Must be at most 10% of full scale (0.099 g or less)', L.validateCalibration({ ...good, fullScaleG: '0.99', noiseFloorG: '0.100' }).errors.noiseFloorG);
+check('guarded: 0.100 is still the cap above 1.00 g', L.validateCalibration({ ...good, fullScaleG: '2.00', noiseFloorG: '0.101' }).errors.noiseFloorG === 'Must be between 0.000 – 0.100 g');
+check('guarded hint + step cap', L.rangeHint('noiseFloorG') === '0.000 – 0.100 g' && L.stepEntry('noiseFloorG', '0.100', 1) === '0.100' && L.stepEntry('noiseFloorG', 'x', -1) === '0.100');
+check('unguarded: up to 0.400 at full scale 4.00', L.validateCalibration({ ...fs4, noiseFloorG: '0.400' }, G).valid && L.validateCalibration({ ...fs4, noiseFloorG: '0.401' }, G).errors.noiseFloorG === 'Must be between 0.000 – 0.400 g');
+check('unguarded: up to and including 10% of full scale', L.validateCalibration({ ...good, fullScaleG: '2.00', noiseFloorG: '0.200' }, G).valid && L.validateCalibration({ ...good, fullScaleG: '2.00', noiseFloorG: '0.201' }, G).errors.noiseFloorG === 'Must be at most 10% of full scale (0.200 g or less)', L.validateCalibration({ ...good, fullScaleG: '2.00', noiseFloorG: '0.201' }, G).errors.noiseFloorG);
+check('unguarded hint + step', L.rangeHint('noiseFloorG', G) === '0.000 – 0.400 g' && L.stepEntry('noiseFloorG', '0.100', 1, G) === '0.101' && L.stepEntry('noiseFloorG', '0.400', 1, G) === '0.400');
+check('other limits unchanged by guardrails', L.validateCalibration({ ...good, fullScaleG: '4.01' }, G).errors.fullScaleG && L.validateCalibration({ ...good, tremorBandMinHz: '7.1' }, G).errors.tremorBandMinHz);
+check('setting read', L.guardrailsDisabled({ calibrationGuardrailsDisabled: true }) === true && L.guardrailsDisabled({}) === false && L.guardrailsDisabled(undefined) === false);
+check('re-enable: min(floor, 0.100)', L.noiseFloorWithGuardrails({ fullScaleG: 4, noiseFloorG: 0.3 }) === 0.1 && L.noiseFloorWithGuardrails({ fullScaleG: 4, noiseFloorG: 0.08 }) === null && L.noiseFloorWithGuardrails({ fullScaleG: 4, noiseFloorG: 0.1 }) === null);
+check('re-enable: exactly min(floor, 0.100) (65th)', L.noiseFloorWithGuardrails({ fullScaleG: 0.5, noiseFloorG: 0.05 }) === null && L.noiseFloorWithGuardrails({ fullScaleG: 1, noiseFloorG: 0.1 }) === null && L.noiseFloorWithGuardrails({ fullScaleG: 2, noiseFloorG: 0.2 }) === 0.1);
+check('re-enable result is valid with guardrails on', [[4, 0.4], [1, 0.1], [0.5, 0.05], [0.1, 0.01], [3.3, 0.33]].every(([fs, nf]) => { const n = L.noiseFloorWithGuardrails({ fullScaleG: fs, noiseFloorG: nf }) ?? nf; return L.validateCalibration({ ...good, fullScaleG: fs.toFixed(2), noiseFloorG: n.toFixed(3) }).valid; }));
+
+for (const os of ['ios', 'android']) {
+  globalThis.__os = os; const P = os + ': ';
+  const gsw = () => r.root.findAll((n) => n.type === 'Switch' && n.props.accessibilityLabel === 'Disable Guardrails')[0];
+  mk({}); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); }); let tx = texts(r.root);
+  check(P + 'switch at the bottom, off by default', gsw() && gsw().props.value === false && tx.indexOf('ADVANCED') > tx.indexOf('Share Calibration Log') && tx.includes('Off: noise floor up to 0.100 g and at most 10% of full scale.'), tx.slice(-300));
+  globalThis.__alerts = []; press(r.root, 'About Disable Guardrails');
+  check(P + 'info button explains', globalThis.__alerts[0][0] === 'Disable Guardrails' && globalThis.__alerts[0][1].includes('up to 0.100 g') && globalThis.__alerts[0][1].includes('0.400 g') && globalThis.__alerts[0][1].includes('hide a mild tremor'));
+  act(() => gsw().props.onValueChange(true));
+  check(P + 'turning on saves right away, floor untouched', updates.length === 1 && updates[0].calibrationGuardrailsDisabled === true && !('noiseFloorG' in updates[0]), JSON.stringify(updates));
+  press(r.root, 'Edit values');
+  check(P + 'switch hidden while editing', !gsw());
+  // editor follows the saved setting
+  mk({ calibrationGuardrailsDisabled: true, fullScaleG: 4 }); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); });
+  tx = texts(r.root);
+  check(P + 'on: caption', gsw().props.value === true && tx.includes('On: noise floor can be up to 10% of full scale (at most 0.400 g).'));
+  press(r.root, 'Edit values'); type(r.root, 'Noise floor', '0.400'); tx = texts(r.root);
+  check(P + 'editor: 0.400 allowed with guardrails disabled', tx.includes('Allowed: 0.000 – 0.400 g') && !tx.includes('Must be'), tx);
+  mk({ fullScaleG: 4 }); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); }); press(r.root, 'Edit values'); type(r.root, 'Noise floor', '0.400'); tx = texts(r.root);
+  check(P + 'editor: 0.400 refused with guardrails on', tx.includes('Must be between 0.000 – 0.100 g'), tx);
+  mk({ fullScaleG: 1 }); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); }); press(r.root, 'Edit values'); type(r.root, 'Noise floor', '0.100'); tx = texts(r.root);
+  check(P + 'editor (guardrails on): 0.100 at full scale 1.00 accepted', !tx.includes('Must be') && tx.includes('Allowed: 0.000 – 0.100 g'), tx);
+  // turning guardrails back on: lowers the floor after asking
+  mk({ calibrationGuardrailsDisabled: true, fullScaleG: 4, noiseFloorG: 0.25 }); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); });
+  globalThis.__alerts = []; act(() => gsw().props.onValueChange(false));
+  const ga = globalThis.__alerts[0];
+  check(P + 're-enable asks first, nothing saved yet', ga && ga[0] === 'Turn guardrails back on?' && ga[1].includes('from 0.250 g to 0.100 g') && updates.length === 0, ga && ga[1]);
+  act(() => ga[2][1].onPress());
+  check(P + 're-enable saves floor 0.100 + guardrails on', updates[0].calibrationGuardrailsDisabled === false && updates[0].noiseFloorG === 0.1 && updates[0].calibrationSource === 'manual' && !!updates[0].calibrationSetAt, JSON.stringify(updates[0]));
+  mk({ calibrationGuardrailsDisabled: true, fullScaleG: 4, noiseFloorG: 0.25 }); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); });
+  globalThis.__alerts = []; act(() => gsw().props.onValueChange(false)); act(() => globalThis.__alerts[0][2][0].onPress?.());
+  check(P + 're-enable cancelled: nothing changes', updates.length === 0);
+  mk({ calibrationGuardrailsDisabled: true, fullScaleG: 4, noiseFloorG: 0.08 }); act(() => { r = TR.create(React.createElement(CalibrationSettingsScreen)); });
+  globalThis.__alerts = []; act(() => gsw().props.onValueChange(false));
+  check(P + 're-enable with floor ≤ 0.100: no question, floor kept', globalThis.__alerts.length === 0 && updates.length === 1 && updates[0].calibrationGuardrailsDisabled === false && !('noiseFloorG' in updates[0]), JSON.stringify(updates));
+  const ib = r.root.findAll((n) => n.type === 'Pressable' && n.props.accessibilityLabel === 'About Disable Guardrails')[0];
+  check(P + 'info button: 44 pt+ target, labelled', ib.props.accessibilityRole === 'button' && ib.props.hitSlop >= 11);
+}
+globalThis.__os = 'ios';
 console.log(`${ok} passed, ${fail} failed`);
