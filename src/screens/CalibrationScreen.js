@@ -162,8 +162,9 @@ export default function CalibrationScreen({ route }) {
         ' TREMOR_BAND_MAX_HZ=' +
         result.tremorBandMaxHz.toFixed(2) +
         ' NOISE_FLOOR_G=' +
-        state.settings.noiseFloorG +
-        ' (unchanged — not measured by calibration)' +
+        (result.noiseFloorG != null
+          ? `${result.noiseFloorG} (lowered from ${result.previousNoiseFloorG} to stay within ${result.noiseFloorSharePct}% of the new full scale)`
+          : `${state.settings.noiseFloorG} (unchanged — not measured by calibration)`) +
         ' recordingSamples=' +
         buffer.length;
       console.log('[calibration]', msg);
@@ -174,6 +175,10 @@ export default function CalibrationScreen({ route }) {
       fullScaleG: result.fullScaleG,
       measuredFullScaleG: result.measuredFullScaleG,
       fullScaleAdjusted: result.fullScaleAdjusted,
+      // SIXTY-SIXTH follow-up: set only when the floor must be lowered
+      noiseFloorG: result.noiseFloorG,
+      previousNoiseFloorG: result.previousNoiseFloorG,
+      noiseFloorSharePct: result.noiseFloorSharePct,
       // Measured min - 1 Hz / max + 1 Hz; kept at the current settings when
       // no sustained band was detected (band filtering then stays off).
       tremorBandMinHz: result.tremorBandMinHz,

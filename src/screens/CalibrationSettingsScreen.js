@@ -32,12 +32,12 @@ import { go } from '../navigation/go';
 
 // SIXTY-FOURTH follow-up: what the info button next to Disable Guardrails says.
 export const GUARDRAILS_INFO =
-  `For advanced users. With guardrails on, the noise floor can be set up to ${NOISE_FLOOR_MAX_G.toFixed(3)} g. ` +
-  `Turning this on lets you raise it to 10% of your full scale range (up to ${NOISE_FLOOR_MAX_UNGUARDED_G.toFixed(3)} g ` +
+  `For advanced users. With guardrails on, the noise floor can be set up to ${NOISE_FLOOR_MAX_G.toFixed(3)} g, and at most 10% of full scale. ` +
+  `Turning this on lets you raise it to 50% of your full scale range (up to ${NOISE_FLOOR_MAX_UNGUARDED_G.toFixed(3)} g ` +
   'with a full scale of 4.00 g).\n\n' +
   'Motion at or below the noise floor reads as intensity 0, so a high noise floor can hide a mild tremor ' +
   'entirely: readings and sound stay at 0 until motion rises above it.\n\n' +
-  `Turning guardrails back on lowers a noise floor above ${NOISE_FLOOR_MAX_G.toFixed(3)} g to ${NOISE_FLOOR_MAX_G.toFixed(3)} g.`;
+  `Turning guardrails back on lowers the noise floor, if needed, to ${NOISE_FLOOR_MAX_G.toFixed(3)} g or 10% of full scale, whichever is lower.`;
 
 function lastSetNote(settings) {
   const source = settings.calibrationSource || (settings.lastCalibratedAt ? 'wizard' : null);
@@ -268,7 +268,7 @@ export default function CalibrationSettingsScreen() {
               </View>
               <Text style={{ fontSize: 12, color: unguarded ? c.warning : c.tx3, lineHeight: 17, marginTop: 4 }}>
                 {unguarded
-                  ? `On: noise floor can be up to 10% of full scale (at most ${NOISE_FLOOR_MAX_UNGUARDED_G.toFixed(3)} g).`
+                  ? `On: noise floor can be up to 50% of full scale (at most ${NOISE_FLOOR_MAX_UNGUARDED_G.toFixed(3)} g).`
                   : `Off: noise floor up to ${NOISE_FLOOR_MAX_G.toFixed(3)} g and at most 10% of full scale.`}
               </Text>
             </View>

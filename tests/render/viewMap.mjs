@@ -1,6 +1,7 @@
 // Renders the real TremorMap component to map.html for a visual check
 // (not part of npm test). SIXTY-SECOND follow-up: the design's four states,
 // SIXTY-THIRD: the tester's settings (floor 0, band from 0.5 Hz),
+// SIXTY-SIXTH: a 50% floor and a dense trail,
 // the upper limit, band filtering off, and dark mode.
 import { build } from 'esbuild'; import plugin from './plugin.mjs'; import fs from 'fs';
 await build({ entryPoints: ['entryMap.js'], bundle: true, format: 'esm', platform: 'node', outfile: 'outMap.mjs', plugins: [plugin], loader: { '.js': 'jsx' }, jsx: 'transform', logLevel: 'error', external: ['react', 'react-test-renderer'] });
@@ -11,6 +12,11 @@ const light = { info: '#2563eb', danger: '#dc2626', tx1: '#0f0f0f', tx2: '#52525
 const dark = { info: '#60a5fa', danger: '#f87171', tx1: '#f0ede8', tx2: '#a0a0a0', tx3: '#606060', bd3: 'rgba(255,255,255,0.10)', bg1: '#191919' };
 const now = Date.now();
 const tr = (pts) => pts.map((p, i) => ({ t: now - (pts.length - i) * 3000, ...p }));
+// SIXTY-SIXTH follow-up: a busy minute — 200 readings wandering around 5 Hz
+const dense = () => { let seed = 5; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647); let hz = 5.2, g = 0.04; const out = [];
+  for (let i = 0; i < 200; i++) { hz = Math.max(3, Math.min(9, hz + (rnd() - 0.5) * 0.35)); g = Math.max(0.004, Math.min(0.5, g * Math.exp((rnd() - 0.5) * 0.25)));
+    const o = hz < 4 || hz > 8; out.push({ t: now - (200 - i) * 300, pf: o ? null : hz, pg: o ? 0.003 : g, af: hz, ag: g }); }
+  return out; };
 const BAND = { bandOn: true, minHz: 4, maxHz: 8, noiseFloorG: 0.006, fullScaleG: 0.35, ceilingG: null };
 const cases = [
   ['(i) in zone', BAND, light, tr([{ pf: 5.8, pg: 0.015 }, { pf: 5.5, pg: 0.02 }, { pf: 5.2, pg: 0.03 }, { pf: 4.9, pg: 0.05 }]), { pf: 4.7, pg: 0.041, af: 4.7, ag: 0.05 }],
@@ -20,6 +26,9 @@ const cases = [
   ['upper limit .20 g', { ...BAND, ceilingG: 0.2 }, light, tr([{ pf: 6, pg: 0.1 }, { pf: 6.1, pg: 0.15 }]), { pf: 6.2, pg: 0.25, af: 6.2, ag: 0.26 }],
   ['band off', { ...BAND, bandOn: false, minHz: 3, maxHz: 14 }, light, tr([{ pf: 2, pg: 0.04 }]), { pf: 2.1, pg: 0.05, af: 2.1, ag: 0.05 }],
   ["tester: floor 0, 0.5–12 Hz, FS 1.0", { bandOn: true, minHz: 0.5, maxHz: 12, noiseFloorG: 0, fullScaleG: 1, ceilingG: null }, light, tr([{ pf: 4.2, pg: 0.004 }, { pf: 4.1, pg: 0.01 }, { pf: 4, pg: 0.015 }]), { pf: 4, pg: 0.02, af: 4, ag: 0.05 }],
+  ['floor 50%: 0.175 of 0.35 g (guardrails off)', { ...BAND, noiseFloorG: 0.175 }, light, tr([{ pf: 5.5, pg: 0.2 }, { pf: 5.8, pg: 0.25 }, { pf: null, pg: 0.15, af: 5.6, ag: 0.16 }]), { pf: 5.2, pg: 0.22, af: 5.2, ag: 0.23 }],
+  ['dense trail (200 readings)', BAND, light, dense(), { pf: 5.6, pg: 0.03, af: 5.6, ag: 0.04 }],
+  ['dense trail, dark', BAND, dark, dense(), { pf: 5.6, pg: 0.03, af: 5.6, ag: 0.04 }],
   ['dark, in zone', BAND, dark, tr([{ pf: 5.5, pg: 0.02 }, { pf: null, pg: 0.003, af: 3, ag: 0.02 }]), { pf: 4.7, pg: 0.041, af: 4.7, ag: 0.05 }],
 ];
 const toSvg = (n) => { if (typeof n === 'string' || typeof n === 'number') return String(n); const map = { Svg: 'svg', Rect: 'rect', Line: 'line', Circle: 'circle', SvgText: 'text' };

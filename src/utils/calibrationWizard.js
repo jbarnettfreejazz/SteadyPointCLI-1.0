@@ -2,7 +2,7 @@
 // its measurements into settings. Pure functions, so they can be tested
 // alone (see CalibrationScreen.js / CalibrationResultsScreen.js).
 
-import { CALIBRATION_FIELDS, CALIBRATION_DEFAULTS } from './calibrationLimits';
+import { CALIBRATION_FIELDS, CALIBRATION_DEFAULTS, noiseFloorWithin, guardrailsDisabled, MAX_NOISE_FLOOR_SHARE, MAX_NOISE_FLOOR_SHARE_UNGUARDED } from './calibrationLimits';
 
 // Finish ("100 Level Reached") is only offered after this much recording:
 // the frequency-band detector needs 1-second windows that stay consistent
@@ -54,8 +54,20 @@ export function calibrationResult({ fullScaleG, band, current = {} }) {
     tremorBandMaxHz = roundTo(clamp(band.maxHz + 1, maxF.min, maxF.max), 1);
     tremorBandMinHz = roundTo(clamp(Math.max(0.5, band.minHz - 1), minF.min, Math.min(minF.max, tremorBandMaxHz - 1)), 1);
   }
+  // SIXTY-SIXTH follow-up: the wizard doesn't measure the noise floor, but a
+  // new full scale can leave the saved floor outside the rule (at most 10% of
+  // full scale with guardrails on, 50% with them disabled) — even above full
+  // scale. Then the floor is lowered to the highest allowed value, and the
+  // results screen says so before saving. Guardrails stay as they are.
+  const currentFloor = typeof current.noiseFloorG === 'number' ? current.noiseFloorG : CALIBRATION_DEFAULTS.noiseFloorG;
+  const unguarded = guardrailsDisabled(current);
+  const loweredFloor = noiseFloorWithin(currentFloor, savedFs, unguarded);
   return {
     fullScaleG: savedFs,
+    // null = unchanged; else the floor to save with this full scale
+    noiseFloorG: loweredFloor,
+    previousNoiseFloorG: currentFloor,
+    noiseFloorSharePct: Math.round((unguarded ? MAX_NOISE_FLOOR_SHARE_UNGUARDED : MAX_NOISE_FLOOR_SHARE) * 100),
     measuredFullScaleG: measured,
     fullScaleAdjusted: Math.abs(savedFs - roundTo(measured, fs.decimals)) > 1e-9,
     tremorBandMinHz,

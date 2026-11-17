@@ -23,12 +23,29 @@ export const MAX_NOISE_FLOOR_SHARE = 0.1;
 // SIXTY-FOURTH follow-up: noise floor maximum. With guardrails on (the
 // default) it can go up to 0.100 g (was 0.050 g), and at most 10% of full
 // scale (SIXTY-FIFTH follow-up: was under 10%). Settings › Calibration ›
-// Disable Guardrails (advanced) allows up to
-// 10% of full scale itself — at most 0.400 g, since full scale tops out at
-// 4.00 g. Turning guardrails back on lowers a floor above 0.100 g to 0.100 g
-// (see noiseFloorWithGuardrails()).
+// Disable Guardrails (advanced) allows more — SIXTY-SIXTH follow-up: up to
+// 50% of full scale (was 10%), at most 2.000 g since full scale tops out at
+// 4.00 g. maxNoiseFloorG() is the one rule used by the editor, by turning
+// guardrails back on, and by the calibration wizard.
 export const NOISE_FLOOR_MAX_G = 0.1;
-export const NOISE_FLOOR_MAX_UNGUARDED_G = 0.4;
+export const NOISE_FLOOR_MAX_UNGUARDED_G = 2.0;
+export const MAX_NOISE_FLOOR_SHARE_UNGUARDED = 0.5;
+
+// The highest noise floor allowed with this full scale, in this mode.
+export function maxNoiseFloorG(fullScaleG, unguarded) {
+  const share = unguarded ? MAX_NOISE_FLOOR_SHARE_UNGUARDED : MAX_NOISE_FLOOR_SHARE;
+  const cap = unguarded ? NOISE_FLOOR_MAX_UNGUARDED_G : NOISE_FLOOR_MAX_G;
+  return Math.round(Math.min(cap, fullScaleG * share) * 1000) / 1000;
+}
+
+// The noise floor to keep with this full scale and mode: the current one if
+// it's allowed, else the highest that is. Returns null when no change is
+// needed. Used when guardrails are turned back on (min(floor, 0.100 g, 10%
+// of full scale)) and when the calibration wizard measures a new full scale.
+export function noiseFloorWithin(noiseFloorG, fullScaleG, unguarded) {
+  const max = maxNoiseFloorG(fullScaleG, unguarded);
+  return noiseFloorG > max + 1e-9 ? max : null;
+}
 
 export function guardrailsDisabled(settings) {
   return settings?.calibrationGuardrailsDisabled === true;
@@ -129,14 +146,15 @@ export function validateCeiling(text, enabled, noiseFloorG) {
   return { value: v, error: null };
 }
 
-// SIXTY-FOURTH follow-up: the noise floor to save when guardrails are turned
-// back on — min(current, 0.100 g). (SIXTY-FIFTH: with "at most 10%" in both
-// modes the result is always allowed, so the 64th's exactly-10% adjustment is
-// gone.) Returns null when the current floor is already allowed.
+// The noise floor to save when guardrails are turned back on.
+// SIXTY-SIXTH follow-up: min(floor, 0.100 g, 10% of full scale) — with up to
+// 50% allowed while they're off, min(floor, 0.100 g) alone could still be
+// over 10% (e.g. 0.250 g at full scale 0.50 g → 0.050 g, not 0.100 g).
+// Returns null when the current floor is already allowed.
 export function noiseFloorWithGuardrails(settings) {
   const nf = typeof settings?.noiseFloorG === 'number' ? settings.noiseFloorG : DEFAULT_NOISE_FLOOR_G;
-  const next = Math.round(Math.min(nf, NOISE_FLOOR_MAX_G) * 1000) / 1000;
-  return Math.abs(next - nf) < 1e-9 ? null : next;
+  const fs = typeof settings?.fullScaleG === 'number' ? settings.fullScaleG : DEFAULT_FULL_SCALE_G;
+  return noiseFloorWithin(nf, fs, false);
 }
 
 export const CALIBRATION_DEFAULTS = {
@@ -218,14 +236,15 @@ export function validateCalibration(entries, opts) {
     values[f.key] = v;
   }
 
-  // Noise floor at most 10% of full scale (which also keeps full scale well
-  // above it) — the same rule with or without guardrails. SIXTY-FIFTH
-  // follow-up: was strictly under 10% with guardrails on, so a 0.100 g floor
-  // at a 1.00 g full scale was refused.
+  // Noise floor at most 10% of full scale with guardrails on (SIXTY-FIFTH
+  // follow-up: was strictly under 10%), at most 50% with them disabled
+  // (SIXTY-SIXTH: was 10%). Either way full scale stays above the floor.
   if (values.fullScaleG != null && values.noiseFloorG != null) {
-    const limit = Math.round(values.fullScaleG * MAX_NOISE_FLOOR_SHARE * 1000) / 1000;
+    const unguarded = !!opts?.guardrailsDisabled;
+    const share = unguarded ? MAX_NOISE_FLOOR_SHARE_UNGUARDED : MAX_NOISE_FLOOR_SHARE;
+    const limit = Math.round(values.fullScaleG * share * 1000) / 1000;
     if (values.noiseFloorG > limit + 1e-9) {
-      errors.noiseFloorG = `Must be at most 10% of full scale (${limit.toFixed(3)} g or less)`;
+      errors.noiseFloorG = `Must be at most ${Math.round(share * 100)}% of full scale (${limit.toFixed(3)} g or less)`;
     }
   }
 

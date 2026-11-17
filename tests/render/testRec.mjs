@@ -208,6 +208,9 @@ for (const os of ['ios', 'android']) {
   const edge = svgText('0.5')[0];
   check(P + 'band from 0.5 Hz: axis starts at 0 Hz, edge drawn at 0.5', edge && edge.props.x > 50 && edge.props.x < 60, edge && edge.props.x);
   check(P + 'tester case reading is in zone (blue dot)', nowDot()[0].props.fill === C.info && row1Of().text === '4.0 Hz · .020 g · intensity 2');
+  // SIXTY-SIXTH follow-up: a high (50%) floor keeps three decimals on the map
+  show({ ...ADV, noiseFloorG: 0.175, calibrationGuardrailsDisabled: true }, { pitchFreqHz: 5.2, actualFreqHz: 5.2, liveRmsG: 0.22, liveRmsAllG: 0.23, displayLevel: 25 });
+  check(P + "floor 0.175: map label '.175' (was '.17')", r.root.findAll((n) => n.type === 'SvgText' && [].concat(n.props.children).join('') === '.175').length === 1 && nowDot()[0].props.fill === C.info);
   show(ADV, IN_ZONE);
   const edge4 = r.root.findAll((n) => n.type === 'SvgText' && [].concat(n.props.children).join('') === '4.0')[0];
   check(P + 'band from 4 Hz: axis still starts at 1 Hz', edge4 && Math.abs(edge4.props.x - (46 + (3 / 14) * 256)) < 0.01, edge4 && edge4.props.x);
@@ -222,7 +225,19 @@ for (const os of ['ios', 'android']) {
   const now = Date.now();
   show(ADV, { ...IN_ZONE, mapTrail: [{ t: now - 40000, af: 2.4, ag: 0.03, pf: null, pg: 0.003 }, { t: now - 10000, af: 5, ag: 0.2, pf: 5, pg: 0.1 }, { t: now, af: 4.7, ag: 0.05, pf: 4.7, pg: 0.041 }] });
   const tr = trailDots();
-  check(P + 'trail: hollow (out) then blue, older fainter', tr.length === 2 && tr[0].props.fill === 'none' && tr[1].props.fill === C.info && tr[0].props.strokeOpacity < tr[1].props.fillOpacity, tr.map((n) => n.props.fill).join(','));
+  // SIXTY-SIXTH follow-up: solid pale tints — no opacity, so overlaps can't darken; older = paler; halo behind "now"
+  const rgb = (x) => (String(x).match(/\d+/g) || []).map(Number);
+  const t3 = circles().filter((n) => n.props.r === 3);
+  check(P + 'trail: two dots, radius 3', tr.length === 0 && t3.length === 2, circles().map((n) => n.props.r).join(','));
+  check(P + 'trail: no opacity anywhere (no stacking)', t3.every((n) => n.props.fillOpacity == null && n.props.strokeOpacity == null));
+  check(P + 'trail: out of zone = background fill + pale grey ring', t3[0].props.fill === '#ffffff' && rgb(t3[0].props.stroke).every((v) => v > 150 && v < 255), t3[0].props.stroke);
+  const blue = rgb(t3[1].props.fill);
+  check(P + 'trail: in zone = pale blue (between blue and white)', blue.length === 3 && blue[0] > 0x25 && blue[0] < 255 && blue[2] >= 0xeb && blue[2] <= 255 && blue[0] < blue[2], t3[1].props.fill);
+  show(ADV, { ...IN_ZONE, mapTrail: [{ t: now - 55000, af: 5, ag: 0.1, pf: 5, pg: 0.1 }, { t: now - 2000, af: 5.5, ag: 0.1, pf: 5.5, pg: 0.1 }, { t: now, af: 4.7, ag: 0.05, pf: 4.7, pg: 0.041 }] });
+  const ages = circles().filter((n) => n.props.r === 3).map((n) => rgb(n.props.fill)[0]);
+  check(P + 'trail: older dot paler than newer', ages.length === 2 && ages[0] > ages[1], ages.join(','));
+  const halo = circles().filter((n) => n.props.r === 10);
+  check(P + 'halo behind the current reading', halo.length === 1 && halo[0].props.fill === '#ffffff' && halo[0].props.cx === nowDot()[0].props.cx && circles().indexOf(halo[0]) < circles().indexOf(nowDot()[0]));
 
   // fixed-height rows and scaling caps (iOS Dynamic Type / Android Font size)
   show(ADV, IN_ZONE);

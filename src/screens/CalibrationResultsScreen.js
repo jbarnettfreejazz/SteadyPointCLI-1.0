@@ -20,14 +20,29 @@ export default function CalibrationResultsScreen({ route }) {
   const c = useTheme();
   const navigation = useNavigation();
   const { state, actions } = useStore();
-  const { fullScaleG, tremorBandMinHz, tremorBandMaxHz, measuredBand, fromWelcome, peakHeld = true, fullScaleAdjusted = false, measuredFullScaleG } =
-    route.params;
+  const {
+    fullScaleG,
+    tremorBandMinHz,
+    tremorBandMaxHz,
+    measuredBand,
+    fromWelcome,
+    peakHeld = true,
+    fullScaleAdjusted = false,
+    measuredFullScaleG,
+    noiseFloorG = null, // SIXTY-SIXTH follow-up: set only when the floor must be lowered
+    previousNoiseFloorG,
+    noiseFloorSharePct = 10,
+  } = route.params;
+  const lowersFloor = typeof noiseFloorG === 'number';
 
   const handleSave = async () => {
     const patch = {
       fullScaleG,
       tremorBandMinHz,
       tremorBandMaxHz,
+      // SIXTY-SIXTH follow-up: keep the noise floor within the rule for the
+      // new full scale (explained on this screen before saving).
+      ...(lowersFloor ? { noiseFloorG } : {}),
       hasCalibrated: true,
       lastCalibratedAt: new Date().toISOString(),
       // THIRTY-FIFTH follow-up: saving a measured calibration turns band
@@ -88,6 +103,26 @@ export default function CalibrationResultsScreen({ route }) {
           </View>
           <Text style={{ color: c.info, fontSize: 16, fontWeight: '700' }}>{tremorBandMaxHz.toFixed(1)} Hz</Text>
         </View>
+
+        {/* SIXTY-SIXTH follow-up: the new full scale needs a lower noise floor */}
+        {lowersFloor && (
+          <View style={[styles.row, { backgroundColor: c.bg2, borderColor: c.bd3, marginTop: 10 }]}>
+            <View>
+              <Text style={{ color: c.tx1, fontSize: 14, fontWeight: '600' }}>Noise floor</Text>
+              <Text style={{ color: c.tx3, fontSize: 11 }}>NOISE_FLOOR_G</Text>
+            </View>
+            <Text style={{ color: c.info, fontSize: 16, fontWeight: '700' }}>{noiseFloorG.toFixed(3)} g</Text>
+          </View>
+        )}
+        {lowersFloor && (
+          <View style={[styles.warningCard, { backgroundColor: c.bgWarning, borderColor: c.bd3 }]}>
+            <Text style={{ color: c.tx1, fontSize: 12, lineHeight: 18 }}>
+              Your noise floor will be lowered from {(previousNoiseFloorG ?? noiseFloorG).toFixed(3)} g to{' '}
+              {noiseFloorG.toFixed(3)} g, {noiseFloorSharePct}% of your new full scale — the most allowed. Leave this
+              screen without saving to keep your current calibration.
+            </Text>
+          </View>
+        )}
 
         {/* THIRTY-NINTH follow-up notes */}
         {!peakHeld && (

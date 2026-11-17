@@ -1,4 +1,4 @@
-# SteadyPoint — handoff note (Nov 13, 2026)
+# SteadyPoint — handoff note (Nov 16, 2026)
 
 React Native 0.81.6 app (old architecture; upgraded from 0.75.4 in the
 Fifty-fourth follow-up — do not go past 0.81.x, see README) (repo root), on iOS and — since the Fifty-second
@@ -54,6 +54,13 @@ trail; three fixed rows under it explain the current reading.
 - 57th: Edit Calibration during a session as a screen (Android + iOS).
 
 ## Waiting on device testing
+
+0000. **66th** — iOS and Android: guardrails off → floor up to 50% of full
+   scale (2.000 g at 4.00 g); guardrails back on → min(floor, 0.100, 10% of
+   full scale); wizard with a high floor and a smaller measured full scale →
+   results screen shows the lowered floor, Save saves both, leaving keeps the
+   old calibration; tremor map trail pale and solid (no dark blotches) with a
+   halo on the current reading, light and dark mode.
 
 000. **Noise floor 0.100 g + Disable Guardrails (64th, 65th)** — iOS and
    Android: floor up to 0.100 g and at most 10% of full scale (0.100 g at
@@ -178,7 +185,8 @@ should present SteadyPoint as wellness/biofeedback, not diagnosis.
   older method, can be below the band and is shown without band context).
 - Flag a saved dominant frequency outside the band ("1.8 Hz · below band").
 - Waveform back on Simple View (design notes left it open; not added).
-- Trail length option on the map (1 min / 5 min / whole session, density
+- Trail length option / fewer trail dots on the map (66th made the trail
+  pale and solid; still 60 s, one dot per 300 ms) (1 min / 5 min / whole session, density
   shading for long spans).
 - "Include this" / drag the box edges on the map to widen settings.
 - Label edge-spill or harmonic in-band readings.

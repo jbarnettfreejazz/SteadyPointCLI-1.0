@@ -3760,6 +3760,61 @@ Changed: `src/utils/calibrationLimits.js`, `src/screens/CalibrationSettingsScree
 `android/gradle.properties` (65), `tests/render/testCal.mjs`, `README.md`,
 `HANDOFF.md`.
 
+## Sixty-sixth follow-up — noise floor up to 50% (guardrails off); wizard and reset fixes; pale map trail
+
+iOS and Android share all of it — no platform branches.
+
+**Guardrails disabled: noise floor up to 50% of full scale** (was 10%), at
+most 2.000 g (50% of the 4.00 g maximum full scale). Error: "Must be at most
+50% of full scale (… g or less)". Guardrails on is unchanged: at most 10% of
+full scale and 0.100 g. Info text and caption updated.
+`calibrationLimits.js`: `NOISE_FLOOR_MAX_UNGUARDED_G` 2.0,
+`MAX_NOISE_FLOOR_SHARE_UNGUARDED` 0.5, and one rule for everything —
+`maxNoiseFloorG(fullScaleG, unguarded)` / `noiseFloorWithin(floor, fullScale, unguarded)`.
+
+**Turning guardrails back on** lowers the floor, if needed, to
+**min(floor, 0.100 g, 10% of full scale)** (`noiseFloorWithGuardrails`) —
+min(floor, 0.100) alone could still be over 10% now (0.250 g at full scale
+0.50 g → 0.050 g, not 0.100 g). Same question before saving as the 64th.
+
+**Calibration wizard bug fixed.** The wizard saved a new full scale without
+checking the noise floor, so the floor could end up outside the rule — even
+above full scale (sessions then quietly used 0.006 g while Settings showed the
+saved floor, and past sessions read 100 above it). This could already happen
+with guardrails on (floor 0.100 g at full scale 1.00 g → measured 0.30 g).
+Now `calibrationResult()` checks the floor against the new full scale with the
+current mode's rule (guardrails stay as they are); if it no longer fits, the
+results screen shows a "Noise floor" row and "Your noise floor will be lowered
+from 0.300 g to 0.125 g, 50% of your new full scale — the most allowed. Leave
+this screen without saving to keep your current calibration." Save to Settings
+saves both; leaving keeps the old calibration. Floor still fine: nothing
+extra shown or saved. The debug log line notes it too.
+
+**Tremor map trail** (`TremorMap.js`): up to 200 trail dots (one per 300 ms
+for 60 s) were drawn see-through, so overlaps stacked into dark blotches. Now
+each trail dot is a solid pale tint — the state colour mixed into the
+background (`tint()`), 40% of the colour when new to 18% at a minute old,
+radius 3 (was 3.5); hollow ones are background-filled with a pale ring.
+Overlaps can't get darker than the tint. The current reading has a
+background-coloured halo (r 10) behind it. Map g labels keep up to three
+decimals without trailing zeros (a 0.175 g floor showed as ".17").
+
+Tests: `cal/test.mjs` +5 (wizard floor check in both modes, full scale
+clamped first), `render/testRes.mjs` +8 (results row and note, Save saves
+both, nothing when not needed — iOS and Android), `render/testCal.mjs`
+(121: 50% rule, 2.000 g cap, messages, maxNoiseFloorG, new reset incl. 0.250
+→ 0.050 on screen), `render/testRec.mjs` (119: solid trail, no opacity,
+older paler, halo, .175 label — iOS and Android). Visual check
+`node viewMap.mjs` adds a 50% floor and a dense 200-reading trail. 774 passed.
+
+Changed: `src/utils/calibrationLimits.js`, `src/utils/calibrationWizard.js`,
+`src/screens/CalibrationScreen.js`, `src/screens/CalibrationResultsScreen.js`,
+`src/screens/CalibrationSettingsScreen.js`, `src/components/TremorMap.js`,
+`android/gradle.properties` (66), `tests/cal/test.mjs`,
+`tests/render/testCal.mjs`, `tests/render/testRes.mjs`,
+`tests/render/testRec.mjs`, `tests/render/viewMap.mjs`, `README.md`,
+`HANDOFF.md`.
+
 ## Roadmap
 1. Done: Infra — state, BLE, DSP, persistence, navigation shell, core
    Home -> Setup -> Recording -> Summary loop

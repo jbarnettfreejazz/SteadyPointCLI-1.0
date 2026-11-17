@@ -23,6 +23,10 @@ import { classifyReading } from '../utils/sessionReading';
 // of 0 (which a log scale can't show) sits on the bottom of the chart — and
 // the frequency axis starts at 0 Hz when the band goes below 1 Hz.
 // Larger dot = now; smaller = the last MAP_TRAIL_SEC (older = fainter).
+// SIXTY-SIXTH follow-up: trail dots are solid pale tints (the state colour
+// mixed into the background, 40% → 18% with age) instead of see-through
+// colour, so up to 200 overlapping dots never stack into dark blotches; the
+// current reading gets a background-coloured halo to stand out from them.
 // The chart spans more than the settings (about 1–15 Hz, and from below the
 // noise floor to above full scale) so readings outside the box still show.
 
@@ -32,7 +36,9 @@ const PAD = { l: 46, r: 38, t: 8, b: 30 };
 // Bottom of the g scale when the noise floor is 0.
 const ZERO_FLOOR_BOTTOM_G = 0.001;
 
-const fmtG = (g) => `${g.toFixed(g < 0.1 ? 3 : 2).replace(/^0(?=\.)/, '')}`;
+// Up to 3 decimals, trailing zeros dropped: .006, .35, .175, 1 (SIXTY-SIXTH
+// follow-up: a 0.175 g floor showed as ".17").
+const fmtG = (g) => g.toFixed(3).replace(/0+$/, '').replace(/\.$/, '').replace(/^0(?=\.)/, '');
 
 export function mapScales({ bandMinHz = 3, bandMaxHz = 14, bandOn = true, noiseFloorG = 0.006, fullScaleG = 0.35, ceilingG = null }) {
   const xMin = bandOn && bandMinHz < 1 ? 0 : 1;
@@ -53,6 +59,31 @@ export function mapScales({ bandMinHz = 3, bandMaxHz = 14, bandOn = true, noiseF
 }
 
 // Dot colours per state; null fill = hollow.
+// SIXTY-SIXTH follow-up: trail look.
+export const TRAIL_R = 3;
+export const TRAIL_TINT_NEW = 0.4; // share of the state colour in the newest trail dot
+export const TRAIL_TINT_OLD = 0.18; // …and in a minute-old one
+const NOW_HALO_R = 10;
+
+// Mix a colour into the background: t = 1 → the colour, 0 → the background.
+// Accepts #rrggbb, #rgb or rgb()/rgba(); anything else is returned as is.
+export function tint(color, bg, t) {
+  const parse = (x) => {
+    const str = String(x || '').trim();
+    let m = str.match(/^#([0-9a-f]{6})$/i);
+    if (m) return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+    m = str.match(/^#([0-9a-f]{3})$/i);
+    if (m) return [0, 1, 2].map((i) => parseInt(m[1][i] + m[1][i], 16));
+    m = str.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (m) return [m[1], m[2], m[3]].map(Number);
+    return null;
+  };
+  const a = parse(color);
+  const b = parse(bg);
+  if (!a || !b) return color;
+  return `rgb(${a.map((v, i) => Math.round(v * t + b[i] * (1 - t))).join(',')})`;
+}
+
 export function dotStyle(kind, c) {
   if (kind === 'zone') return { fill: c.info, stroke: null };
   if (kind === 'over') return { fill: c.danger, stroke: null };
@@ -100,6 +131,21 @@ export default function TremorMap({ trail = [], current, window: win, c, nowMs =
   const age = (p) => Math.max(0, Math.min(1, (nowMs - p.t) / (trailSec * 1000)));
   const past = trail.slice(0, -1);
   const now = current ? classifyReading(current, win) : null;
+
+  // Trail dot: opaque, pale, fading toward the background with age.
+  const trailDot = (p, key) => {
+    const k = classifyReading(p, win);
+    if (k.hz == null || k.kind === 'waiting') return null;
+    const st = dotStyle(k.kind, c);
+    const t = TRAIL_TINT_OLD + (TRAIL_TINT_NEW - TRAIL_TINT_OLD) * (1 - age(p));
+    const cx = s.x(k.hz);
+    const cy = s.y(k.g);
+    return st.fill ? (
+      <Circle key={key} cx={cx} cy={cy} r={TRAIL_R} fill={tint(st.fill, c.bg1, t)} />
+    ) : (
+      <Circle key={key} cx={cx} cy={cy} r={TRAIL_R} fill={c.bg1} stroke={tint(st.stroke, c.bg1, t)} strokeWidth={1.2} />
+    );
+  };
 
   const dot = (p, key, r, opacity) => {
     const k = classifyReading(p, win);
@@ -234,7 +280,10 @@ export default function TremorMap({ trail = [], current, window: win, c, nowMs =
         </SvgText>
 
         {/* trail: last minute, older = fainter; then now */}
-        {past.map((p, i) => dot(p, `t${i}`, 3.5, 0.15 + 0.45 * (1 - age(p))))}
+        {past.map((p, i) => trailDot(p, `t${i}`))}
+        {now && now.hz != null && now.kind !== 'waiting' && (
+          <Circle key="halo" cx={s.x(now.hz)} cy={s.y(now.g)} r={NOW_HALO_R} fill={c.bg1} />
+        )}
         {current && dot(current, 'now', 7, 1)}
       </Svg>
     </View>
